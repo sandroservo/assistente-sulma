@@ -6,7 +6,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { getOrganizationSettings } from "@/lib/session";
+import { getEvolutionCredentials, evolutionApiRoot } from "@/lib/evolution-credentials";
 
 export async function GET(
   req: Request,
@@ -14,7 +14,7 @@ export async function GET(
 ) {
   try {
     const session = await auth();
-    
+
     if (!session?.user?.organizationId) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
@@ -22,60 +22,69 @@ export async function GET(
     const { id } = await params;
 
     const instance = await prisma.instance.findFirst({
-      where: {
-        id,
-        organizationId: session.user.organizationId,
-      },
+      where: { id, organizationId: session.user.organizationId },
     });
 
     if (!instance) {
       return NextResponse.json({ error: "Instância não encontrada" }, { status: 404 });
     }
 
-    const orgSettings = await getOrganizationSettings(session.user.organizationId);
-    const baseUrl = orgSettings.evolutionBaseUrl || process.env.EVOLUTION_BASE_URL;
-    const token = instance.token || orgSettings.evolutionToken || process.env.EVOLUTION_TOKEN;
-
-    if (!baseUrl || !token) {
-      return NextResponse.json({ status: instance.status });
+    const creds = await getEvolutionCredentials(session.user.organizationId, instance.token);
+    if (!creds.baseUrl || !creds.token) {
+      return NextResponse.json({ status: instance.status, phone: instance.phone, qrcode: instance.qrcode });
     }
 
-    const statusUrl = `${baseUrl.replace(/\/api\/?$/, "")}/instance/connectionState/${instance.instanceName}`;
-    
+    const statusUrl = `${evolutionApiRoot(creds.baseUrl)}/instance/connectionState/${instance.instanceName}`;
+
     try {
       const res = await fetch(statusUrl, {
         method: "GET",
-        headers: { apikey: token },
+        headers: { apikey: creds.token },
       });
 
       if (res.ok) {
         const data = await res.json();
+        const state = data.instance?.state || data.state;
         let newStatus = instance.status;
         let phone = instance.phone;
 
-        if (data.instance?.state === "open") {
+        if (state === "open") {
           newStatus = "CONNECTED";
-          phone = data.instance?.ownerJid?.split("@")[0] || phone;
-        } else if (data.instance?.state === "connecting") {
+          phone = data.instance?.ownerJid?.split("@")[0] || data.instance?.owner || phone;
+        } else if (state === "connecting") {
           newStatus = "CONNECTING";
-        } else {
-          newStatus = "DISCONNECTED";
+        } else if (state === "close") {
+          newStatus = instance.qrcode ? "QRCODE" : "DISCONNECTED";
+        }
+
+        const extra: { warmupStartedAt?: Date; qrcode?: string | null } = {};
+        if (newStatus === "CONNECTED") {
+          extra.qrcode = null;
+          if (!instance.warmupStartedAt) extra.warmupStartedAt = new Date();
         }
 
         if (newStatus !== instance.status || phone !== instance.phone) {
           await prisma.instance.update({
             where: { id },
-            data: { status: newStatus, phone },
+            data: { status: newStatus, phone, ...extra },
           });
         }
 
-        return NextResponse.json({ status: newStatus, phone });
+        return NextResponse.json({
+          status: newStatus,
+          phone,
+          qrcode: newStatus === "QRCODE" ? instance.qrcode : null,
+        });
       }
     } catch (e) {
       console.error("Erro ao verificar status:", e);
     }
 
-    return NextResponse.json({ status: instance.status, phone: instance.phone });
+    return NextResponse.json({
+      status: instance.status,
+      phone: instance.phone,
+      qrcode: instance.qrcode,
+    });
   } catch (error) {
     console.error("Erro ao buscar status:", error);
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });

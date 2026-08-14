@@ -8,8 +8,9 @@
 
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Search,
   X,
@@ -50,7 +51,17 @@ interface BroadcastLog {
   contact: string;
   status: "ok" | "error" | "waiting";
   message?: string;
+  instance?: string;
 }
+
+type BroadcastProfile = "conservative" | "balanced" | "aggressive";
+
+type BroadcastInstance = {
+  id: string;
+  name: string;
+  status: string;
+  health?: { ok: boolean; reason?: string };
+};
 
 interface ContactsPageClientProps {
   contacts: Contact[];
@@ -117,9 +128,25 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
   const [broadcastLogs, setBroadcastLogs] = useState<BroadcastLog[]>([]);
   const [broadcastProgress, setBroadcastProgress] = useState({ sent: 0, failed: 0, total: 0 });
   const [broadcastDone, setBroadcastDone] = useState(false);
+  const [broadcastInstances, setBroadcastInstances] = useState<BroadcastInstance[]>([]);
+  const [broadcastInstanceIds, setBroadcastInstanceIds] = useState<Set<string>>(new Set());
+  const [broadcastProfile, setBroadcastProfile] = useState<BroadcastProfile>("balanced");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showBroadcast) return;
+    fetch("/api/instances")
+      .then((r) => r.json())
+      .then((data) => {
+        const list = (data.instances || []) as BroadcastInstance[];
+        setBroadcastInstances(list);
+        const connected = list.filter((i) => i.status === "CONNECTED").map((i) => i.id);
+        setBroadcastInstanceIds(new Set(connected));
+      })
+      .catch(() => setBroadcastInstances([]));
+  }, [showBroadcast]);
 
   // Filtro
   const filtered = contacts.filter((c) => {
@@ -199,6 +226,8 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
           message: broadcastMessage,
           imageBase64: broadcastImage || undefined,
           imageMimeType: broadcastImageMime || undefined,
+          instanceIds: [...broadcastInstanceIds],
+          profile: broadcastProfile,
         }),
       });
 
@@ -241,6 +270,7 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
                   contact: data.contact,
                   status: data.status,
                   message: data.error,
+                  instance: data.instance,
                 },
               ]);
             } else if (data.type === "waiting") {
@@ -279,7 +309,7 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
     } finally {
       setIsSending(false);
     }
-  }, [contacts, selectedIds, broadcastMessage, broadcastImage, broadcastImageMime]);
+  }, [contacts, selectedIds, broadcastMessage, broadcastImage, broadcastImageMime, broadcastInstanceIds, broadcastProfile]);
 
   const handleSaveContact = useCallback(async () => {
     setSaveError(null);
@@ -700,10 +730,76 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
                     />
                   </div>
 
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Instâncias (escolha aleatória a cada envio)
+                    </label>
+                    {broadcastInstances.length === 0 ? (
+                      <p className="text-sm text-gray-500">
+                        Nenhuma instância cadastrada.{" "}
+                        <Link href="/settings" className="text-[#001A5E] font-medium hover:underline">
+                          Criar em Configurações → Evolution
+                        </Link>
+                      </p>
+                    ) : (
+                      <div className="space-y-2 max-h-36 overflow-y-auto border border-gray-200 rounded-xl p-3">
+                        {broadcastInstances.map((inst) => {
+                          const connected = inst.status === "CONNECTED";
+                          return (
+                            <label
+                              key={inst.id}
+                              className={cn(
+                                "flex items-center gap-2 text-sm",
+                                !connected && "opacity-50"
+                              )}
+                            >
+                              <input
+                                type="checkbox"
+                                disabled={!connected}
+                                checked={broadcastInstanceIds.has(inst.id)}
+                                onChange={() => {
+                                  setBroadcastInstanceIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(inst.id)) next.delete(inst.id);
+                                    else next.add(inst.id);
+                                    return next;
+                                  });
+                                }}
+                                className="rounded border-gray-300"
+                              />
+                              <span className="flex-1">{inst.name}</span>
+                              <span className="text-[11px] text-gray-400">
+                                {connected ? "conectada" : inst.status.toLowerCase()}
+                                {inst.health?.reason ? ` · ${inst.health.reason}` : ""}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label htmlFor="broadcast-profile" className="block text-sm font-medium text-gray-700 mb-1">
+                      Perfil anti-bloqueio
+                    </label>
+                    <select
+                      id="broadcast-profile"
+                      value={broadcastProfile}
+                      onChange={(e) => setBroadcastProfile(e.target.value as BroadcastProfile)}
+                      className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#001A5E]/20 focus:border-[#001A5E]"
+                    >
+                      <option value="conservative">Conservador — mais intervalo, menos volume</option>
+                      <option value="balanced">Equilibrado — recomendado</option>
+                      <option value="aggressive">Ágil — mais volume, mais risco</option>
+                    </select>
+                  </div>
+
                   {/* Aviso */}
                   <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
-                    <strong>Atenção:</strong> As mensagens serão enviadas em ordem aleatória com intervalos dinâmicos e imprevisíveis (8s a 90s) para proteger seu número contra bloqueio.
-                    Não feche esta janela durante o disparo.
+                    <strong>Anti-bloqueio Meta:</strong> cada mensagem sai de uma instância sorteada
+                    (prioriza quem enviou menos). Há aquecimento em números novos, limites por hora/dia
+                    e pausa automática se a Meta recusar. Não feche esta janela durante o disparo.
                   </div>
                 </>
               )}
@@ -752,7 +848,7 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
                           )}>
                             {log.status === "waiting"
                               ? log.message
-                              : `${log.contact}${log.message ? ` — ${log.message}` : ""}`}
+                              : `${log.contact}${log.instance ? ` · ${log.instance}` : ""}${log.message ? ` — ${log.message}` : ""}`}
                           </span>
                         </div>
                       ))}
@@ -785,7 +881,7 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
                   </Button>
                   <Button
                     onClick={startBroadcast}
-                    disabled={!broadcastMessage.trim()}
+                    disabled={!broadcastMessage.trim() || broadcastInstanceIds.size === 0}
                     className="bg-[#001A5E] hover:bg-[#003080] text-white"
                   >
                     <Send className="w-4 h-4 mr-2" />

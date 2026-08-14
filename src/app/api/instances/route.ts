@@ -6,11 +6,23 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { instanceHealth, resetCountersIfNeeded, type AntiBlockProfile } from "@/lib/anti-block";
+
+function slugify(value: string): string {
+  return (
+    value
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || `sulma-${Date.now()}`
+  );
+}
 
 export async function GET() {
   try {
     const session = await auth();
-    
+
     if (!session?.user?.organizationId) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
@@ -20,7 +32,14 @@ export async function GET() {
       orderBy: { createdAt: "desc" },
     });
 
-    return NextResponse.json({ instances });
+    const profile: AntiBlockProfile = "balanced";
+    const payload = instances.map((inst) => {
+      const fresh = resetCountersIfNeeded(inst);
+      const health = instanceHealth(fresh, profile);
+      return { ...fresh, health };
+    });
+
+    return NextResponse.json({ instances: payload });
   } catch (error) {
     console.error("Erro ao buscar instâncias:", error);
     return NextResponse.json({ error: "Erro interno" }, { status: 500 });
@@ -30,21 +49,19 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const session = await auth();
-    
+
     if (!session?.user?.organizationId) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
-    const { name, instanceName } = await req.json();
+    const { name, instanceName, dailyLimit, hourlyLimit } = await req.json();
 
-    if (!name || !instanceName) {
-      return NextResponse.json(
-        { error: "Nome e nome técnico são obrigatórios" },
-        { status: 400 }
-      );
+    if (!name?.trim()) {
+      return NextResponse.json({ error: "Nome amigável é obrigatório" }, { status: 400 });
     }
 
-    // Verifica limite de instâncias
+    const slug = slugify(String(instanceName || name));
+
     const org = await prisma.organization.findUnique({
       where: { id: session.user.organizationId },
       select: { maxInstances: true },
@@ -54,34 +71,33 @@ export async function POST(req: Request) {
       where: { organizationId: session.user.organizationId },
     });
 
-    if (count >= (org?.maxInstances || 1)) {
+    const maxInstances = Math.max(org?.maxInstances || 20, 20);
+    if (count >= maxInstances) {
       return NextResponse.json(
-        { error: "Limite de instâncias atingido" },
+        { error: `Limite de instâncias atingido (${maxInstances})` },
         { status: 400 }
       );
     }
 
-    // Verifica se instanceName já existe na organização
     const existing = await prisma.instance.findFirst({
       where: {
         organizationId: session.user.organizationId,
-        instanceName,
+        instanceName: slug,
       },
     });
 
     if (existing) {
-      return NextResponse.json(
-        { error: "Nome técnico já existe" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Nome técnico já existe" }, { status: 400 });
     }
 
     const instance = await prisma.instance.create({
       data: {
         organizationId: session.user.organizationId,
-        name,
-        instanceName,
-        isDefault: count === 0, // Primeira instância é a padrão
+        name: name.trim(),
+        instanceName: slug,
+        isDefault: count === 0,
+        dailyLimit: Number(dailyLimit) > 0 ? Number(dailyLimit) : 80,
+        hourlyLimit: Number(hourlyLimit) > 0 ? Number(hourlyLimit) : 12,
       },
     });
 

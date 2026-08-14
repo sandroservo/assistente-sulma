@@ -6,7 +6,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { getOrganizationSettings } from "@/lib/session";
+import { getEvolutionCredentials, evolutionApiRoot } from "@/lib/evolution-credentials";
 
 export async function POST(
   req: Request,
@@ -14,7 +14,7 @@ export async function POST(
 ) {
   try {
     const session = await auth();
-    
+
     if (!session?.user?.organizationId) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
@@ -22,26 +22,19 @@ export async function POST(
     const { id } = await params;
 
     const instance = await prisma.instance.findFirst({
-      where: {
-        id,
-        organizationId: session.user.organizationId,
-      },
+      where: { id, organizationId: session.user.organizationId },
     });
 
     if (!instance) {
       return NextResponse.json({ error: "Instância não encontrada" }, { status: 404 });
     }
 
-    const orgSettings = await getOrganizationSettings(session.user.organizationId);
-    const baseUrl = orgSettings.evolutionBaseUrl || process.env.EVOLUTION_BASE_URL;
-    const token = instance.token || orgSettings.evolutionToken || process.env.EVOLUTION_TOKEN;
-
-    if (baseUrl && token) {
-      const logoutUrl = `${baseUrl.replace(/\/api\/?$/, "")}/instance/logout/${instance.instanceName}`;
-      
-      await fetch(logoutUrl, {
+    const creds = await getEvolutionCredentials(session.user.organizationId, instance.token);
+    if (creds.baseUrl && creds.token) {
+      const root = evolutionApiRoot(creds.baseUrl);
+      await fetch(`${root}/instance/logout/${instance.instanceName}`, {
         method: "DELETE",
-        headers: { apikey: token },
+        headers: { apikey: creds.token },
       }).catch(() => {});
     }
 

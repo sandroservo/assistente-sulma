@@ -37,7 +37,7 @@ model Organization {
   slug        String   @unique // URL amigável: minha-empresa
   plan        String   @default("free") // free, pro, enterprise
   maxUsers    Int      @default(3)
-  maxInstances Int     @default(1)
+  maxInstances Int     @default(20)
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -83,6 +83,20 @@ model Instance {
   qrcode         String?        @db.Text
   webhookUrl     String?
   isDefault      Boolean        @default(false)
+
+  // Anti-bloqueio Meta / WhatsApp
+  dailyLimit        Int       @default(80)
+  hourlyLimit       Int       @default(12)
+  warmupStartedAt   DateTime?
+  pausedUntil       DateTime?
+  consecutiveErrors Int       @default(0)
+  lastSentAt        DateTime?
+  sentToday         Int       @default(0)
+  sentThisHour      Int       @default(0)
+  dayResetAt        DateTime?
+  hourResetAt       DateTime?
+  lastError         String?   @db.Text
+
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 

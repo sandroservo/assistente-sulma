@@ -34,7 +34,7 @@ export default async function SettingsPage() {
   };
 
   return (
-    <div className="p-4 pt-14 md:p-6 md:pt-6 space-y-4 md:space-y-6 max-w-4xl">
+    <div className="p-4 pt-14 md:p-6 md:pt-6 space-y-4 md:space-y-6 max-w-5xl">
       <div>
         <h1 className="text-xl md:text-2xl font-bold text-gray-800">Configurações</h1>
         <p className="text-gray-500">

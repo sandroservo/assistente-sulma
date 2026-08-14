@@ -3,30 +3,36 @@
  * Site: https://cloudservo.com.br
  */
 
-import { getSystemSettings } from "@/lib/settings";
+import { getEvolutionCredentials, evolutionApiRoot } from "@/lib/evolution-credentials";
 
 type SendTextArgs = {
   number: string;
   text: string;
+  instanceName?: string;
+  instanceToken?: string;
 };
 
-async function getEvolutionConfig() {
-  const settings = await getSystemSettings();
+async function getEvolutionConfig(override?: { instanceName?: string; token?: string }) {
+  const creds = await getEvolutionCredentials(null, override?.token);
   return {
-    baseUrl: settings.evolutionBaseUrl || process.env.EVOLUTION_BASE_URL || "",
-    instance: settings.evolutionInstance || process.env.EVOLUTION_INSTANCE || "",
-    token: settings.evolutionToken || process.env.EVOLUTION_TOKEN || "",
+    baseUrl: creds.baseUrl,
+    instance: override?.instanceName || creds.defaultInstance,
+    token: creds.token,
   };
 }
 
 /**
  * Envia status "composing" (digitando) para o contato
  */
-export async function evolutionSendPresence(number: string, presence: "composing" | "recording" | "paused" = "composing") {
-  const { baseUrl, instance, token } = await getEvolutionConfig();
+export async function evolutionSendPresence(
+  number: string,
+  presence: "composing" | "recording" | "paused" = "composing",
+  override?: { instanceName?: string; token?: string }
+) {
+  const { baseUrl, instance, token } = await getEvolutionConfig(override);
 
   // Evolution API v2 - endpoint correto: /chat/sendPresence
-  const url = `${baseUrl.replace(/\/api\/?$/, "")}/chat/sendPresence/${instance}`;
+  const url = `${evolutionApiRoot(baseUrl)}/chat/sendPresence/${instance}`;
 
   try {
     const res = await fetch(url, {
@@ -51,15 +57,18 @@ export async function evolutionSendPresence(number: string, presence: "composing
   }
 }
 
-export async function evolutionSendText({ number, text }: SendTextArgs) {
-  const { baseUrl, instance, token } = await getEvolutionConfig();
+export async function evolutionSendText({ number, text, instanceName, instanceToken }: SendTextArgs) {
+  const { baseUrl, instance, token } = await getEvolutionConfig({
+    instanceName,
+    token: instanceToken,
+  });
 
   if (!baseUrl || !instance || !token) {
     throw new Error("Evolution API não configurada (baseUrl, instance ou token faltando)");
   }
 
-  // Evolution API v2 - remove /api do base se existir
-  const url = `${baseUrl.replace(/\/api\/?$/, "")}/message/sendText/${instance}`;
+  // Evolution API v2
+  const url = `${evolutionApiRoot(baseUrl)}/message/sendText/${instance}`;
 
   console.log("[Evolution] Sending message to:", url);
 
@@ -133,6 +142,8 @@ export async function evolutionSendMedia({
   mimetype,
   caption,
   fileName,
+  instanceName,
+  instanceToken,
 }: {
   number: string;
   mediatype: "image" | "document" | "video";
@@ -140,14 +151,19 @@ export async function evolutionSendMedia({
   mimetype?: string;
   caption?: string;
   fileName?: string;
+  instanceName?: string;
+  instanceToken?: string;
 }) {
-  const { baseUrl, instance, token } = await getEvolutionConfig();
+  const { baseUrl, instance, token } = await getEvolutionConfig({
+    instanceName,
+    token: instanceToken,
+  });
 
   if (!baseUrl || !instance || !token) {
     throw new Error("Evolution API não configurada (baseUrl, instance ou token faltando)");
   }
 
-  const url = `${baseUrl.replace(/\/api\/?$/, "")}/message/sendMedia/${instance}`;
+  const url = `${evolutionApiRoot(baseUrl)}/message/sendMedia/${instance}`;
 
   console.log("[Evolution] Sending media to:", number, "type:", mediatype);
 
@@ -499,21 +515,24 @@ export async function evolutionSendContact({
   return res.json().catch(() => ({}));
 }
 
-export async function evolutionSendTextHumanized({ number, text }: SendTextArgs) {
+export async function evolutionSendTextHumanized({ number, text, instanceName, instanceToken }: SendTextArgs) {
   const parts = splitMessage(text);
   
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
     
     // Envia status "digitando"
-    await evolutionSendPresence(number, "composing");
+    await evolutionSendPresence(number, "composing", {
+      instanceName,
+      token: instanceToken,
+    });
     
     // Aguarda tempo proporcional ao tamanho
     const typingDelay = calculateTypingDelay(part);
     await sleep(typingDelay);
     
     // Envia a mensagem
-    await evolutionSendText({ number, text: part });
+    await evolutionSendText({ number, text: part, instanceName, instanceToken });
     
     // Pausa entre mensagens (se não for a última)
     if (i < parts.length - 1) {

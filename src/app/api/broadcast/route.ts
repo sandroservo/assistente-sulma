@@ -2,15 +2,23 @@
  * Autor: Sandro Servo
  * Site: https://cloudservo.com.br
  *
- * API de disparo em massa via SSE (Server-Sent Events)
- * Envia mensagens sequencialmente com delay aleatório (10-30s)
- * para evitar bloqueio do número na Evolution API / WhatsApp.
+ * Disparo em massa com rotação aleatória de instâncias e anti-bloqueio Meta.
  */
 
-import { evolutionSendText, evolutionSendMedia } from "@/lib/evolution";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { evolutionSendText, evolutionSendMedia, evolutionSendPresence } from "@/lib/evolution";
+import {
+  pickRandomInstance,
+  computeDelay,
+  recordSendSuccess,
+  recordSendFailure,
+  formatWait,
+  type AntiBlockProfile,
+} from "@/lib/anti-block";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // 5 minutos máximo
+export const maxDuration = 300;
 
 interface BroadcastContact {
   phone: string;
@@ -20,40 +28,10 @@ interface BroadcastContact {
 interface BroadcastPayload {
   contacts: BroadcastContact[];
   message: string;
-  imageBase64?: string; // base64 puro (sem prefixo data:...)
+  imageBase64?: string;
   imageMimeType?: string;
-}
-
-/**
- * Gera delays dinâmicos e imprevisíveis para simular comportamento humano.
- * Usa distribuição ponderada com 3 faixas + pausas longas esporádicas.
- */
-function dynamicDelay(index: number, total: number): number {
-  const roll = Math.random();
-
-  let base: number;
-  if (roll < 0.50) {
-    // 50% — pausa curta: 8-18s
-    base = 8000 + Math.random() * 10000;
-  } else if (roll < 0.85) {
-    // 35% — pausa média: 20-45s
-    base = 20000 + Math.random() * 25000;
-  } else {
-    // 15% — pausa longa: 50-90s
-    base = 50000 + Math.random() * 40000;
-  }
-
-  // Jitter ±20% para nunca repetir o mesmo intervalo
-  const jitter = base * (0.8 + Math.random() * 0.4);
-
-  // A cada ~5 envios, chance de 40% de pausa extra (30-60s)
-  // simula "distração" humana
-  const extraPause =
-    index > 0 && index % 5 === 0 && Math.random() < 0.4
-      ? 30000 + Math.random() * 30000
-      : 0;
-
-  return Math.round(jitter + extraPause);
+  instanceIds?: string[];
+  profile?: AntiBlockProfile;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -62,8 +40,23 @@ function sleep(ms: number): Promise<void> {
 
 export async function POST(req: Request) {
   try {
+    const session = await auth();
+    if (!session?.user?.organizationId) {
+      return new Response(JSON.stringify({ error: "Não autorizado" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     const body: BroadcastPayload = await req.json();
-    const { contacts, message, imageBase64, imageMimeType } = body;
+    const {
+      contacts,
+      message,
+      imageBase64,
+      imageMimeType,
+      instanceIds,
+      profile = "balanced",
+    } = body;
 
     if (!contacts?.length || !message?.trim()) {
       return new Response(
@@ -72,32 +65,86 @@ export async function POST(req: Request) {
       );
     }
 
-    // Embaralha os contatos para ordem aleatória
-    const shuffled = [...contacts].sort(() => Math.random() - 0.5);
+    const safeProfile: AntiBlockProfile = ["conservative", "balanced", "aggressive"].includes(profile)
+      ? profile
+      : "balanced";
 
+    const where = {
+      organizationId: session.user.organizationId,
+      status: "CONNECTED" as const,
+      ...(instanceIds?.length ? { id: { in: instanceIds } } : {}),
+    };
+
+    let pool = await prisma.instance.findMany({ where });
+    if (!pool.length) {
+      return new Response(
+        JSON.stringify({
+          error: "Nenhuma instância conectada. Crie e conecte WhatsApp em Instâncias.",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    const shuffled = [...contacts].sort(() => Math.random() - 0.5);
     const encoder = new TextEncoder();
+
     const stream = new ReadableStream({
       async start(controller) {
         function send(data: Record<string, unknown>) {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(data)}\n\n`)
-          );
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
         }
 
         send({
           type: "start",
           total: shuffled.length,
-          message: `Iniciando disparo para ${shuffled.length} contatos...`,
+          instances: pool.length,
+          profile: safeProfile,
+          message: `Disparo para ${shuffled.length} contatos em ${pool.length} instância(s), perfil ${safeProfile}.`,
         });
 
         let sent = 0;
         let failed = 0;
+        let skipped = 0;
 
         for (let i = 0; i < shuffled.length; i++) {
           const contact = shuffled[i];
+          pool = await prisma.instance.findMany({ where });
+
+          let picked = pickRandomInstance(pool, safeProfile);
+          if (!picked) {
+            send({
+              type: "waiting",
+              delay: 60_000,
+              message: "Todas as instâncias no limite/pausa. Aguardando 60s...",
+            });
+            await sleep(60_000);
+            pool = await prisma.instance.findMany({ where });
+            picked = pickRandomInstance(pool, safeProfile);
+          }
+
+          if (!picked) {
+            skipped++;
+            send({
+              type: "progress",
+              index: i + 1,
+              total: shuffled.length,
+              sent,
+              failed,
+              skipped,
+              contact: contact.name || contact.phone,
+              status: "error",
+              error: "Sem instância disponível (anti-bloqueio)",
+            });
+            continue;
+          }
 
           try {
-            // Se tem imagem, envia como mídia com caption
+            await evolutionSendPresence(contact.phone, "composing", {
+              instanceName: picked.instanceName,
+              token: picked.token || undefined,
+            }).catch(() => {});
+            await sleep(800 + Math.random() * 1800);
+
             if (imageBase64) {
               await evolutionSendMedia({
                 number: contact.phone,
@@ -105,14 +152,19 @@ export async function POST(req: Request) {
                 media: imageBase64,
                 mimetype: imageMimeType || "image/jpeg",
                 caption: message,
+                instanceName: picked.instanceName,
+                instanceToken: picked.token || undefined,
               });
             } else {
               await evolutionSendText({
                 number: contact.phone,
                 text: message,
+                instanceName: picked.instanceName,
+                instanceToken: picked.token || undefined,
               });
             }
 
+            await recordSendSuccess(picked.id);
             sent++;
             send({
               type: "progress",
@@ -120,32 +172,35 @@ export async function POST(req: Request) {
               total: shuffled.length,
               sent,
               failed,
+              skipped,
               contact: contact.name || contact.phone,
+              instance: picked.name,
               status: "ok",
             });
           } catch (error) {
             failed++;
-            const errMsg =
-              error instanceof Error ? error.message : "Erro desconhecido";
+            const errMsg = error instanceof Error ? error.message : "Erro desconhecido";
+            const kind = await recordSendFailure(picked.id, errMsg);
             send({
               type: "progress",
               index: i + 1,
               total: shuffled.length,
               sent,
               failed,
+              skipped,
               contact: contact.name || contact.phone,
+              instance: picked.name,
               status: "error",
-              error: errMsg,
+              error: kind === "blocked" ? "Instância pausada (risco de bloqueio)" : errMsg,
             });
           }
 
-          // Delay dinâmico e imprevisível (exceto no último)
           if (i < shuffled.length - 1) {
-            const delay = dynamicDelay(i, shuffled.length);
+            const delay = computeDelay(i, safeProfile);
             send({
               type: "waiting",
               delay,
-              message: `Aguardando ${Math.round(delay / 1000)}s antes do próximo envio...`,
+              message: `Anti-bloqueio: aguardando ${formatWait(delay)}...`,
             });
             await sleep(delay);
           }
@@ -155,8 +210,9 @@ export async function POST(req: Request) {
           type: "done",
           sent,
           failed,
+          skipped,
           total: shuffled.length,
-          message: `Disparo finalizado: ${sent} enviados, ${failed} falharam.`,
+          message: `Finalizado: ${sent} enviados, ${failed} falharam${skipped ? `, ${skipped} adiados` : ""}.`,
         });
 
         controller.close();
@@ -172,9 +228,9 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     console.error("[Broadcast] Erro:", error);
-    return new Response(
-      JSON.stringify({ error: "Erro interno no broadcast" }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ error: "Erro interno no broadcast" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 }

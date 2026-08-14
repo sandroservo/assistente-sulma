@@ -31,6 +31,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ExcludedContactsCard } from "./ExcludedContactsCard";
 import { SectorsCard } from "./SectorsCard";
 import { TagsCard } from "./TagsCard";
+import InstancesManager from "@/app/(dashboard)/instances/ui/InstancesManager";
 
 const WEBHOOK_PATH = "/api/asaas/webhook";
 
@@ -208,7 +209,8 @@ export function SettingsForm({ settings, defaultSystemPrompt }: SettingsFormProp
                   placeholder="https://seu-dominio.com"
                 />
                 <p className="text-xs text-gray-500">
-                  Deve ser a URL pública do painel (ex.: https://seu-dominio.com). Usada ao registrar o webhook na Evolution e em outros integradores.
+                  URL pública do painel, acessível pela Evolution (não use localhost). Ex.: https://sulma.seudominio.com.
+                  Sem isso, as mensagens do WhatsApp não chegam no chat.
                 </p>
               </div>
             </CardContent>
@@ -218,9 +220,9 @@ export function SettingsForm({ settings, defaultSystemPrompt }: SettingsFormProp
         <TabsContent value="evolution" className="space-y-4 pt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Configurações da Evolution API</CardTitle>
+              <CardTitle>Evolution API</CardTitle>
               <CardDescription>
-                Configure a conexão com o WhatsApp via Evolution API
+                URL e token globais. As instâncias WhatsApp são criadas abaixo, nesta mesma aba.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -231,15 +233,6 @@ export function SettingsForm({ settings, defaultSystemPrompt }: SettingsFormProp
                   value={formData.evolutionBaseUrl}
                   onChange={(e) => handleChange("evolutionBaseUrl", e.target.value)}
                   placeholder="https://evolution.seudominio.com"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="evolutionInstance">Nome da Instância</Label>
-                <Input
-                  id="evolutionInstance"
-                  value={formData.evolutionInstance}
-                  onChange={(e) => handleChange("evolutionInstance", e.target.value)}
-                  placeholder="amovidas"
                 />
               </div>
               <div className="space-y-2">
@@ -288,8 +281,30 @@ export function SettingsForm({ settings, defaultSystemPrompt }: SettingsFormProp
                   Configure esta URL no webhook da Evolution API para receber mensagens
                 </p>
               </div>
+
+              <div className="flex justify-end pt-2">
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  className="bg-[#001A5E] hover:bg-[#003080]"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Salvando...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="h-4 w-4 mr-2" />
+                      Salvar URL e token
+                    </>
+                  )}
+                </Button>
+              </div>
             </CardContent>
           </Card>
+
+          <InstancesManager embedded />
         </TabsContent>
 
         <TabsContent value="openai" className="space-y-4 pt-4">
@@ -444,7 +459,7 @@ export function SettingsForm({ settings, defaultSystemPrompt }: SettingsFormProp
       </Tabs>
 
       {/* Setores/Etiquetas têm salvamento próprio — botão só nas abas de config do sistema */}
-      {tab !== "sectors" && tab !== "tags" && (
+      {tab !== "sectors" && tab !== "tags" && tab !== "evolution" && (
         <div className="flex justify-end">
           <Button
             type="submit"

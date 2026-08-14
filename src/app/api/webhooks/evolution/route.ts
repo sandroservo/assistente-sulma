@@ -14,9 +14,14 @@ import { transcribeAudio, describeImage } from "@/lib/media";
 import { saveMedia } from "@/lib/media-storage";
 import { generateAIResponse, shouldTransferToHuman, detectLeadStatus, generateConversationSummary } from "@/lib/ai";
 import { updateLeadScore, getStatusFromScore } from "@/lib/lead-score";
+import {
+  collectWebhookMessages,
+  parseIncomingMessage,
+  isAckOnlyEvent,
+} from "@/lib/evolution-webhook";
 
-function phoneFromJid(remoteJid: string) {
-  return remoteJid.split("@")[0];
+export async function GET() {
+  return NextResponse.json({ ok: true, service: "evolution-webhook" });
 }
 
 export async function POST(req: Request) {
@@ -31,7 +36,60 @@ export async function POST(req: Request) {
 
     // Processa eventos de atualização de status (read receipts)
     const event = payload?.event;
-    if (event === "messages.update" || event === "messages.ack") {
+    const eventName = String(event || "").toLowerCase();
+
+    if (
+      eventName === "connection.update" ||
+      eventName === "connection_update" ||
+      eventName.includes("qrcode")
+    ) {
+      const instName = payload?.instance as string | undefined;
+      if (instName) {
+        const data = payload?.data || {};
+        const state = String(data.state || data.status || "").toLowerCase();
+        const qrRaw =
+          data.qrcode?.base64 || data.qrcode?.code || data.base64 || data.qrcode;
+        const qr =
+          typeof qrRaw === "string"
+            ? qrRaw.startsWith("data:")
+              ? qrRaw
+              : `data:image/png;base64,${qrRaw}`
+            : null;
+
+        const existing = await prisma.instance.findFirst({
+          where: { instanceName: instName },
+        });
+        if (existing) {
+          const update: {
+            status?: "CONNECTED" | "CONNECTING" | "QRCODE" | "DISCONNECTED";
+            qrcode?: string | null;
+            phone?: string | null;
+            warmupStartedAt?: Date;
+          } = {};
+          if (state === "open") {
+            update.status = "CONNECTED";
+            update.qrcode = null;
+            const owner = data.wuid || data.ownerJid || data.instance?.ownerJid;
+            if (typeof owner === "string") update.phone = owner.split("@")[0];
+            if (!existing.warmupStartedAt) update.warmupStartedAt = new Date();
+          } else if (state === "connecting") {
+            update.status = "CONNECTING";
+          } else if (state === "close" || state === "closed") {
+            update.status = qr ? "QRCODE" : "DISCONNECTED";
+          }
+          if (qr && update.status !== "CONNECTED") {
+            update.status = "QRCODE";
+            update.qrcode = qr;
+          }
+          if (Object.keys(update).length) {
+            await prisma.instance.update({ where: { id: existing.id }, data: update });
+          }
+        }
+      }
+      return NextResponse.json({ ok: true, event: eventName });
+    }
+
+    if (isAckOnlyEvent(eventName, payload)) {
       const updates = Array.isArray(payload?.data) ? payload.data : [payload?.data];
       for (const upd of updates) {
         const msgId = upd?.key?.id || upd?.id;
@@ -57,18 +115,57 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, event: "status_update" });
     }
 
-    const remoteJid: string | undefined = payload?.data?.key?.remoteJid;
-    const providerId: string | undefined = payload?.data?.key?.id;
-    const fromMe: boolean = payload?.data?.key?.fromMe === true;
-    const pushName: string | undefined = payload?.data?.pushName;
-    const instanceName: string | undefined = payload?.instance;
-    const avatarUrl: string | undefined = payload?.data?.profilePictureUrl;
+    const items = collectWebhookMessages(payload);
+    if (!items.length) {
+      console.log("[Evolution webhook] evento sem mensagem", {
+        event: eventName,
+        instance: payload?.instance,
+        dataKeys: payload?.data && typeof payload.data === "object" ? Object.keys(payload.data) : [],
+      });
+      return NextResponse.json({ ok: true, action: "ignored", event: eventName });
+    }
 
-    const msg = payload?.data?.message ?? {};
-    let text: string | undefined =
-      msg?.conversation ?? msg?.extendedTextMessage?.text;
+    let lastAction: Record<string, unknown> = { ok: true };
+    for (const item of items) {
+      lastAction = await ingestWhatsAppMessage(item, payload?.instance);
+    }
+    return NextResponse.json(lastAction);
+  } catch (error) {
+    console.error("Webhook Evolution error:", error);
+    return NextResponse.json(
+      { ok: false, error: "internal error" },
+      { status: 500 }
+    );
+  }
+}
 
-    const messageType: "text" | "audio" | "image" = text != null ? "text" : msg?.audioMessage ? "audio" : msg?.imageMessage ? "image" : "text";
+async function ingestWhatsAppMessage(
+  item: Record<string, unknown>,
+  instanceName: string | undefined
+): Promise<Record<string, unknown>> {
+  try {
+    const parsed = parseIncomingMessage(item);
+    if (!parsed) {
+      return { ok: true, action: "skipped_jid" };
+    }
+
+    const { remoteJid, phone, fromMe, pushName, avatarUrl, messageType } = parsed;
+    let { text } = parsed;
+    const providerId = parsed.providerId;
+    const msg = parsed.message;
+
+    if (providerId) {
+      const already = await prisma.message.findFirst({ where: { providerId } });
+      if (already) return { ok: true, action: "deduped" };
+    }
+
+    console.log("[Evolution webhook] mensagem", {
+      instance: instanceName,
+      fromMe,
+      phone,
+      type: messageType,
+      hasText: !!text,
+    });
 
     // Só transcreve/descreve mídia em mensagens recebidas (não as enviadas por nós)
     let savedMediaUrl: string | null = null;
@@ -105,15 +202,6 @@ export async function POST(req: Request) {
       }
     }
 
-    if (!remoteJid) {
-      return NextResponse.json(
-        { ok: false, error: "remoteJid missing" },
-        { status: 422 }
-      );
-    }
-
-    const phone = phoneFromJid(remoteJid);
-
     // Single-tenant: usa sempre a primeira organização
     let org = await prisma.organization.findFirst({ orderBy: { name: "asc" } });
     if (!org) {
@@ -138,12 +226,14 @@ export async function POST(req: Request) {
         phone,
       },
     });
-
-    // Busca foto de perfil se não tiver ainda
-    let profilePicture: string | undefined = avatarUrl;
-    if (!profilePicture) {
-      profilePicture = (await evolutionGetProfilePicture(phone)) ?? undefined;
+    if (!lead && phone.length >= 8) {
+      const tail = phone.slice(-8);
+      lead = await prisma.lead.findFirst({
+        where: { organizationId, phone: { endsWith: tail } },
+      });
     }
+
+    const profilePicture: string | undefined = avatarUrl;
 
     // pushName só é confiável em mensagens recebidas (!fromMe)
     // Mensagens enviadas (fromMe) carregam o nome da conta business, não do cliente
@@ -227,6 +317,18 @@ export async function POST(req: Request) {
     const { emitConversationUpdate } = await import("@/lib/realtime");
     emitConversationUpdate({ type: "message", conversationId: conversation.id, leadId: conversation.leadId });
 
+    if (!lead.avatarUrl) {
+      evolutionGetProfilePicture(phone)
+        .then(async (picture) => {
+          if (!picture) return;
+          await prisma.lead.update({
+            where: { id: lead.id },
+            data: { avatarUrl: picture },
+          });
+        })
+        .catch(() => {});
+    }
+
     // Mensagem enviada pelo atendente (fromMe): humano assumiu a conversa — bot não responde até "Devolver ao Bot"
     if (fromMe) {
       const wasBot = lead.ownerType === "bot";
@@ -244,16 +346,16 @@ export async function POST(req: Request) {
           },
         });
       }
-      return NextResponse.json({ ok: true, action: "human_sent" });
+      return { ok: true, action: "human_sent" };
     }
 
     if (!text?.trim()) {
-      return NextResponse.json({ ok: true, action: "no_text" });
+      return { ok: true, action: "no_text" };
     }
 
     // Se lead já está com humano, não responde automaticamente
     if (lead.ownerType === "human") {
-      return NextResponse.json({ ok: true, action: "human_owner" });
+      return { ok: true, action: "human_owner" };
     }
 
     // Lista de exceção: números da empresa etc. — Sulma não responde
@@ -268,7 +370,7 @@ export async function POST(req: Request) {
         },
       });
       if (excluded) {
-        return NextResponse.json({ ok: true, action: "excluded_contact" });
+        return { ok: true, action: "excluded_contact" };
       }
     }
 
@@ -292,7 +394,12 @@ export async function POST(req: Request) {
 
       const handoffMessage = `Entendido! 👤 Vou te transferir para um de nossos atendentes. Aguarde um momento que logo alguém vai te atender!`;
       
-      await evolutionSendText({ number: phone, text: handoffMessage });
+      await evolutionSendText({
+        number: phone,
+        text: handoffMessage,
+        instanceName: instance?.instanceName,
+        instanceToken: instance?.token || undefined,
+      });
       await prisma.message.create({
         data: {
           conversationId: conversation.id,
@@ -303,7 +410,7 @@ export async function POST(req: Request) {
         },
       });
 
-      return NextResponse.json({ ok: true, action: "handoff" });
+      return { ok: true, action: "handoff" };
     }
 
     // Guarda anti-loop: se o número do outro lado também é automação, ele responde
@@ -327,7 +434,7 @@ export async function POST(req: Request) {
           },
         }),
       ]);
-      return NextResponse.json({ ok: true, action: "loop_guard", recentOut });
+      return { ok: true, action: "loop_guard", recentOut };
     }
 
     // Busca histórico de mensagens para contexto da IA
@@ -390,6 +497,8 @@ export async function POST(req: Request) {
               mimetype: "image/jpeg",
               caption: "Conheça nossos planos - Amo Vidas Clube de Saúde 💖",
               fileName: "planos.jpeg",
+              instanceName: instance?.instanceName,
+              instanceToken: instance?.token || undefined,
             });
 
             await prisma.message.create({
@@ -410,7 +519,12 @@ export async function POST(req: Request) {
       }
 
       // Envia mensagem de forma humanizada (com "digitando" e pausas)
-      await evolutionSendTextHumanized({ number: phone, text: botResponse });
+      await evolutionSendTextHumanized({
+        number: phone,
+        text: botResponse,
+        instanceName: instance?.instanceName,
+        instanceToken: instance?.token || undefined,
+      });
       
       // Salva a resposta do bot no banco
       await prisma.message.create({
@@ -442,6 +556,8 @@ export async function POST(req: Request) {
             mimetype: "image/jpeg",
             caption: card.caption,
             fileName: card.file,
+            instanceName: instance?.instanceName,
+            instanceToken: instance?.token || undefined,
           });
 
           await prisma.message.create({
@@ -520,16 +636,13 @@ export async function POST(req: Request) {
       console.error("Erro ao enviar resposta do bot:", sendError);
     }
 
-    return NextResponse.json({ 
+    return { 
       ok: true, 
       action: "bot_replied",
       extractedData 
-    });
+    };
   } catch (error) {
-    console.error("Webhook Evolution error:", error);
-    return NextResponse.json(
-      { ok: false, error: "internal error" },
-      { status: 500 }
-    );
+    console.error("Webhook Evolution ingest error:", error);
+    return { ok: false, error: "internal error" };
   }
 }

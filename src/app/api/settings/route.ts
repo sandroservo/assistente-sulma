@@ -92,7 +92,35 @@ export async function POST(req: Request) {
     }
     
     await saveSystemSettings(settings);
-    
+
+    try {
+      const { resolveAppBaseUrl, evolutionWebhookUrl, setInstanceWebhook } = await import(
+        "@/lib/evolution-webhook"
+      );
+      const { getEvolutionCredentials } = await import("@/lib/evolution-credentials");
+      const { prisma } = await import("@/lib/prisma");
+      const appBase = await resolveAppBaseUrl();
+      if (appBase) {
+        const webhookUrl = evolutionWebhookUrl(appBase);
+        const creds = await getEvolutionCredentials(session.user.organizationId);
+        if (creds.baseUrl && creds.token) {
+          const instances = await prisma.instance.findMany({
+            where: { organizationId: session.user.organizationId },
+          });
+          for (const inst of instances) {
+            await setInstanceWebhook({
+              baseUrl: creds.baseUrl,
+              token: inst.token || creds.token,
+              instanceName: inst.instanceName,
+              webhookUrl,
+            });
+          }
+        }
+      }
+    } catch (syncError) {
+      console.error("[Settings] Falha ao sincronizar webhooks Evolution:", syncError);
+    }
+
     return NextResponse.json({
       ok: true,
       message: "Configurações salvas com sucesso",
