@@ -1,0 +1,211 @@
+{
+  "name": "SDR-Response",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "payload"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -608,
+        320
+      ],
+      "id": "541d64b6-34a9-4165-8559-d95c10c184e1",
+      "name": "Payload"
+    },
+    {
+      "parameters": {
+        "dataToSave": {
+          "values": [
+            {
+              "key": "message",
+              "value": "={{ $json.payload.ia }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executionData",
+      "typeVersion": 1.1,
+      "position": [
+        -416,
+        96
+      ],
+      "id": "0667ed19-bf4c-4f23-ba01-432b1ccbbf71",
+      "name": "Execution Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "const callback = $input.first().json.payload.ia;\n\nfunction splitResponse(text) {\n  const delimiters = /(?<=\\.\\s)|(?<=!\\s)|(?<=\\?\\s)/;\n  return text\n    .split(delimiters)\n    .map(item => item.trim())\n    .filter(item => item.length > 0);\n}\n\nconst messages = splitResponse(callback);\n\nreturn {\n  json: {\n    messages\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -304,
+        320
+      ],
+      "id": "5494d496-22e8-4678-8765-c090f26cdefd",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "messages",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -96,
+        320
+      ],
+      "id": "6565c5b0-53b1-476b-9370-e6fe2914bb08",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        112,
+        320
+      ],
+      "id": "f34f4d34-7ddf-4027-b73c-b8800a6fe362",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Payload').item.json.payload.evolution.serverUrl.startsWith('http') ? $('Payload').item.json.payload.evolution.serverUrl : 'https://' + $('Payload').item.json.payload.evolution.serverUrl }}/message/sendText/{{ $('Payload').item.json.payload.evolution.instance }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ String($('Payload').item.json.payload.evolution.apikey || '').replace(/[\\r\\n]/g, '').trim() }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $('Payload').item.json.payload.from.replace(/@s\\\\.whatsapp\\\\.net$/, '').replace(/\\\\D/g, '') }}\",\n  \"text\": {{ JSON.stringify($('Split Out').item.json.messages) }},\n  \"delay\": 2000\n}\n\n\n\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        336,
+        336
+      ],
+      "id": "cdd2cccf-1e56-4d4c-bfdf-2fa176ca8d78",
+      "name": "SendText"
+    },
+    {
+      "parameters": {
+        "amount": 1
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        512,
+        336
+      ],
+      "id": "2c5efb86-3963-4839-9bd6-d54e98320a5c",
+      "name": "Wait",
+      "webhookId": "dc73ae3f-22c5-4e44-9239-05aaf439be76"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Payload": {
+      "main": [
+        [
+          {
+            "node": "Execution Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "SendText",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SendText": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "3616db51-7c38-4713-9c4a-a0ed52ff82ec",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "930478b94924cf6d07d840e9945a18c10509ab9c823055fa81d299e36a4727da"
+  },
+  "id": "omzMEDRZLnlfsFiV",
+  "tags": []
+}

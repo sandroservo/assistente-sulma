@@ -1,0 +1,209 @@
+{
+  "name": "SDR - UserInfo",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "```\nUserInfo: Cadastra ou  pega informação de usuario do Supabase\n```",
+        "height": 352,
+        "width": 784,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -32,
+        -64
+      ],
+      "typeVersion": 1,
+      "id": "7bc1b06b-7455-4594-85f9-fc0b497d755d",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "clients",
+        "returnAll": true,
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "whatsapp",
+              "condition": "eq",
+              "keyValue": "={{ $json.payload.whatsapp }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -64,
+        32
+      ],
+      "id": "5522d6cf-6e40-4e7d-907b-e07f6bd44d98",
+      "name": "Get many rows",
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "MaHyBemOJ4u8MD0L",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "tableId": "clients",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "whatsapp",
+              "fieldValue": "={{ $('Payload').item.json.payload.whatsapp }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        368,
+        0
+      ],
+      "id": "6e24ad3d-cc40-4c94-b2d9-c5025dd847aa",
+      "name": "Create a row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "MaHyBemOJ4u8MD0L",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7804da28-8815-479f-af4e-1612fa13b352",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "notExists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        160,
+        32
+      ],
+      "id": "9ea346c6-5a76-48e4-8329-b4a7c57b03a8",
+      "name": "Usuario não existe?"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "payload",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -304,
+        32
+      ],
+      "id": "a389b60c-93c9-4d1b-ad04-31a7caf23ea8",
+      "name": "Payload"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        560,
+        48
+      ],
+      "id": "c5c7747d-7971-4a70-a07c-5f0a4f8f0b7a",
+      "name": "UserInfor"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Get many rows": {
+      "main": [
+        [
+          {
+            "node": "Usuario não existe?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a row": {
+      "main": [
+        [
+          {
+            "node": "UserInfor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Usuario não existe?": {
+      "main": [
+        [
+          {
+            "node": "Create a row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "UserInfor",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Payload": {
+      "main": [
+        [
+          {
+            "node": "Get many rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c8dc0bc9-54eb-44e8-a6b2-6496e1c4c52b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "930478b94924cf6d07d840e9945a18c10509ab9c823055fa81d299e36a4727da"
+  },
+  "id": "lMpX4I0r02uaQZh5",
+  "tags": []
+}

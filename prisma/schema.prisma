@@ -1,0 +1,375 @@
+/**
+ * Autor: Sandro Servo
+ * Site: https://cloudservo.com.br
+ * 
+ * Schema da Assistente Sulma
+ */
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==========================================
+// MULTITENANCY - Organizações e Usuários
+// ==========================================
+
+enum UserRole {
+  OWNER       // Dono da organização
+  ADMIN       // Administrador
+  AGENT       // Atendente
+  VIEWER      // Apenas visualização
+}
+
+enum InstanceStatus {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  QRCODE
+}
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique // URL amigável: minha-empresa
+  plan        String   @default("free") // free, pro, enterprise
+  maxUsers    Int      @default(3)
+  maxInstances Int     @default(1)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users            User[]
+  instances        Instance[]
+  leads            Lead[]
+  knowledge        Knowledge[]
+  settings         OrgSettings[]
+  excludedContacts ExcludedContact[]
+  tags             Tag[]
+}
+
+model User {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  email          String   @unique
+  passwordHash   String
+  role           UserRole @default(AGENT)
+  avatar         String?
+  active         Boolean  @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  handoffs     Handoff[]    @relation("AssignedTo")
+  sentMessages Message[]    @relation("SentByUser")
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+model Instance {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String         // Nome amigável: "WhatsApp Vendas"
+  instanceName   String         // Nome na Evolution API
+  token          String?        // Token específico da instância
+  phone          String?        // Número conectado
+  status         InstanceStatus @default(DISCONNECTED)
+  qrcode         String?        @db.Text
+  webhookUrl     String?
+  isDefault      Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([organizationId, instanceName])
+  @@index([organizationId])
+}
+
+model OrgSettings {
+  id             String   @id @default(cuid())
+  organizationId String
+  key            String
+  value          String   @db.Text
+  encrypted      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+}
+
+// Lista de exceção: números (ex.: da empresa) para a Sulma NÃO responder
+model ExcludedContact {
+  id             String   @id @default(cuid())
+  organizationId String
+  phone          String   // número normalizado (apenas dígitos)
+  name           String?  // rótulo opcional, ex.: "João - Comercial"
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, phone])
+  @@index([organizationId])
+}
+
+// ==========================================
+// LEADS E CONVERSAS
+// ==========================================
+
+enum LeadStatus {
+  NOVO
+  EM_ATENDIMENTO
+  CONSCIENTIZADO
+  QUALIFICADO
+  LEAD_FRIO
+  PROPOSTA_ENVIADA
+  EM_NEGOCIACAO
+  AGUARDANDO_RESPOSTA
+  FECHADO
+  PERDIDO
+  HUMANO_SOLICITADO
+  HUMANO_EM_ATENDIMENTO
+}
+
+enum OwnerType {
+  bot
+  human
+}
+
+enum MessageDirection {
+  in
+  out
+}
+
+model Lead {
+  id             String     @id @default(cuid())
+  organizationId String
+  name           String?
+  pushName       String?
+  avatarUrl      String?    // URL do avatar do WhatsApp
+  email          String?
+  phone          String
+  city           String?
+  status         LeadStatus @default(NOVO)
+  ownerType      OwnerType  @default(bot)
+  category       String     @default("geral")  // Para abas/filtros
+  notes          String?
+  summary        String?
+  priority       String     @default("low") // low, medium, high
+  source         String     @default("whatsapp") // whatsapp, instagram, manual
+  leadScore      Int        @default(0) // Lead Score 0-1000
+  birthDate      DateTime?  // Data de nascimento para mensagem de aniversário
+  lastMessageAt  DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  followUps     FollowUp[]
+  handoffs      Handoff[]
+  memories      LeadMemory[]
+  tags          Tag[]
+
+  @@unique([organizationId, phone]) // Phone único por organização
+  @@index([organizationId])
+  @@index([category])
+}
+
+model SavedContact {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  phone          String
+  organization   String?  // Ex: "Clínica São Lucas"
+  category       String   @default("clinica") // clinica, medico, laboratorio, etc.
+  email          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model Tag {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  color          String   @default("#001A5E") // Azul Unisulma
+  createdAt      DateTime @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leads          Lead[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+model Conversation {
+  id            String    @id @default(cuid())
+  leadId        String
+  instanceId    String?   // Instância WhatsApp usada
+  channel       String    @default("whatsapp")
+  remoteJid     String
+  lastMessageAt DateTime?
+  unreadCount   Int       @default(0)
+  status        String    @default("open") // open | closed (atendimento encerrado)
+  isPinned      Boolean   @default(false)
+  sectorId       String?  // fila/setor (Sector.id) — coluna plana, sem FK
+  assignedUserId String?  // atendente designado (User.id) — coluna plana, sem FK
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  lead      Lead       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  instance  Instance?  @relation(fields: [instanceId], references: [id])
+  messages  Message[]
+  followUps FollowUp[]
+  handoffs  Handoff[]
+
+  @@unique([instanceId, remoteJid]) // remoteJid único por instância
+  @@index([leadId])
+  @@index([instanceId])
+  @@index([status])
+  @@index([sectorId])
+  @@index([assignedUserId])
+}
+
+// Setor/fila de atendimento (Vendas, Suporte, Financeiro...). Standalone, sem relations.
+model Sector {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  color          String   @default("#001A5E")
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+}
+
+model Message {
+  id               String           @id @default(cuid())
+  conversationId   String
+  direction        MessageDirection
+  type             String           @default("text")
+  body             String?
+  mediaUrl         String?          // Caminho do arquivo de mídia (imagem/áudio/vídeo/documento)
+  transcription    String?          // Transcrição de áudio ou descrição de imagem pela IA
+  providerId       String?
+  quotedMessageId  String?          // ID interno da mensagem citada (reply)
+  quotedProviderId String?          // providerId da mensagem citada (para Evolution API)
+  status           String?          // sent, delivered, read (read receipts)
+  editedAt         DateTime?        // Data da última edição
+  sentByUserId     String?          // ID do atendente que enviou (null = bot ou lead)
+  sentAt           DateTime?
+  createdAt        DateTime         @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sentByUser   User?        @relation("SentByUser", fields: [sentByUserId], references: [id])
+
+  @@index([conversationId, createdAt])
+  @@index([providerId])
+}
+
+model FollowUp {
+  id             String   @id @default(cuid())
+  leadId         String
+  conversationId String
+  stage          Int
+  scheduledAt    DateTime
+  status         String   @default("pending")
+  lastError      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([status, scheduledAt])
+}
+
+model Handoff {
+  id             String   @id @default(cuid())
+  leadId         String
+  conversationId String
+  assignedToId   String?  // Atendente humano designado
+  requestedBy    String
+  reason         String?
+  summary        String?
+  status         String   @default("open") // open, assigned, closed
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  assignedTo   User?        @relation("AssignedTo", fields: [assignedToId], references: [id])
+
+  @@index([assignedToId])
+  @@index([status])
+}
+
+model Settings {
+  id        String   @id @default("default")
+  key       String   @unique
+  value     String
+  encrypted Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Knowledge {
+  id             String   @id @default(cuid())
+  organizationId String
+  category       String   // planos, regras, links, check-ups, pagamento, etc.
+  title          String
+  content        String   @db.Text
+  keywords       String?  // palavras-chave separadas por vírgula
+  priority       Int      @default(0) // prioridade na busca
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([category])
+  @@index([active])
+}
+
+model LeadMemory {
+  id        String   @id @default(cuid())
+  leadId    String
+  type      String   // preference, interest, objection, context, summary
+  key       String   // ex: plano_interesse, objecao_preco, preferencia_pagamento
+  value     String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, key])
+  @@index([leadId])
+  @@index([type])
+}
+
+// Log de webhooks Asaas (auditoria e debug)
+model AsaasWebhookLog {
+  id          String   @id @default(cuid())
+  event       String
+  paymentId   String?
+  rawPayload  String   @db.Text
+  processed   Boolean  @default(false)
+  errorMsg    String?  @db.Text
+  leadId      String?
+  createdAt   DateTime @default(now())
+
+  @@index([event])
+  @@index([createdAt])
+}

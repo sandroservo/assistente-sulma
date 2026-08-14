@@ -1,0 +1,9 @@
+# Configuração do Nixpacks para deploy no Coolify
+# Autor: Sandro Servo
+# Site: https://cloudservo.com.br
+
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[variables]
+NIXPACKS_NODE_VERSION = "22"

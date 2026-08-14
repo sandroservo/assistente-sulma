@@ -1,0 +1,19 @@
+[Unit]
+Description=Assistente Sulma (Next.js)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/www/sulma
+Environment=NODE_ENV=production
+Environment=PORT=3001
+ExecStart=/usr/bin/npm run start:prod
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sulma-app
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,366 @@
+{
+  "name": "SDR - MessageQueue",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "```\nBuffer de mensagens, agrupando mensagens, aguardando X segundos, antes de seguir o fluxo\n```",
+        "height": 656,
+        "width": 1392,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -656,
+        -288
+      ],
+      "typeVersion": 1,
+      "id": "45d4e768-b92c-49d4-b5f2-942c98c017a9",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "operation": "push",
+        "list": "={{ $json.payload.from }}_messages",
+        "messageData": "={{ JSON.stringify($json.payload.msg) }}",
+        "tail": true
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        -16
+      ],
+      "id": "4c0ebee2-84f1-4e84-bc4d-96bb9ab4fc5a",
+      "name": "AddToQuee",
+      "credentials": {
+        "redis": {
+          "id": "9UbndBup5tjiaZxu",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "propertyName": "messages",
+        "key": "={{ $node['Playload'].json.payload.from }}_messages",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -192,
+        -16
+      ],
+      "id": "bb114dc4-37ce-4a90-8cf4-68201539378c",
+      "name": "Redis",
+      "credentials": {
+        "redis": {
+          "id": "9UbndBup5tjiaZxu",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ JSON.parse($json.messages.first()).id }}",
+                    "rightValue": "={{ $node['Playload'].json.payload.msg.id }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEquals"
+                    },
+                    "id": "88e79492-9b14-4f22-8029-e43c1590cfe9"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Do nothing"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "ef8ef30e-9335-4fc6-8362-bfda219933eb",
+                    "leftValue": "={{ JSON.parse($json.messages.last()).date }}",
+                    "rightValue": "={{ $now.minus(15, 'seconds' ) }}",
+                    "operator": {
+                      "type": "dateTime",
+                      "operation": "before"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Continue"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Wait"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        32,
+        -32
+      ],
+      "id": "6771ed0e-df76-425e-819d-653c314d3cd1",
+      "name": "Switch"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        368,
+        144
+      ],
+      "id": "1b537cbb-710c-4a74-8c9e-4d4b3ca63fa8",
+      "name": "Wait",
+      "webhookId": "6fd5ac9f-a987-4e77-a153-8c36962658e6"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2ad9147a-d14a-45c7-ab68-335103beac3b",
+              "leftValue": "={{ $json.messages }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "7a23ab64-d368-45a1-b525-0a5dbd765cfd",
+              "leftValue": "={{ $json.messages}}",
+              "rightValue": "=1",
+              "operator": {
+                "type": "array",
+                "operation": "lengthLte",
+                "rightType": "number"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        368,
+        -176
+      ],
+      "id": "070d7931-4f95-4cd9-a9bf-bcaf3edb6c7c",
+      "name": "KeepWaiting"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ $node['Playload'].json.payload.from }}_messages"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        384,
+        0
+      ],
+      "id": "3f9b6b6c-039e-47a7-a1ef-5d491d8d3aaf",
+      "name": "CleanUp",
+      "credentials": {
+        "redis": {
+          "id": "9UbndBup5tjiaZxu",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4556c8b5-a1ab-4690-8825-1d70166a7ed1",
+              "name": "=message",
+              "value": "={{ $json.messages.map(item => JSON.parse(item).content).join(\" \") }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        592,
+        0
+      ],
+      "id": "c8485242-c559-4ee3-bcf9-e86fad93254c",
+      "name": "Output"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "payload",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -608,
+        -16
+      ],
+      "id": "8f12f9c6-a572-46c0-b048-5caee1aa03da",
+      "name": "Playload"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "=559991216206@s.whatsapp.net_messages"
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        -496,
+        192
+      ],
+      "id": "e03b9539-7a7c-4be9-ad28-eb0721df3505",
+      "name": "CleanUp1",
+      "credentials": {
+        "redis": {
+          "id": "9UbndBup5tjiaZxu",
+          "name": "Redis account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "AddToQuee": {
+      "main": [
+        [
+          {
+            "node": "Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "KeepWaiting",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CleanUp",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CleanUp": {
+      "main": [
+        [
+          {
+            "node": "Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Playload": {
+      "main": [
+        [
+          {
+            "node": "AddToQuee",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "025115ab-7632-4f3a-b31d-b2561aa0eea8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "930478b94924cf6d07d840e9945a18c10509ab9c823055fa81d299e36a4727da"
+  },
+  "id": "B8V2nxLlAZthESmP",
+  "tags": []
+}

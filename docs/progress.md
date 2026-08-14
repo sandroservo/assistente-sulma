@@ -1,0 +1,39 @@
+# CRM Features Implementation
+
+- [x] Initial Code Exploration
+- [x] Planning
+- [/] Implementation
+    - [x] Database Schema Updates (Tag, Category, Priority, Source)
+    - [x] API Routes (tags, leads search/filter, lead delete, lead tags)
+    - [x] Kanban Visual Enhancements
+        - [x] Display Summary (Audio Request)
+        - [x] Display Priority (Color/Icon)
+        - [x] Display Time in Stage
+        - [x] Display Source Icon
+        - [x] Display Responsible Avatar
+    - [x] Search (Name/Phone) in Kanban
+    - [x] Tags UI in Cards
+    - [x] API Routes
+        - [x] `/api/tags` - CRUD tags
+        - [x] `/api/leads` - search/filter
+        - [x] `/api/leads/[id]` - delete
+        - [x] `/api/leads/[id]/tags` - add/remove tags
+        - [x] `/api/leads/[id]/reminders` - create reminders
+        - [x] `/api/transcribe` - placeholder
+    - [x] Kanban UI
+        - [x] Search bar (name/phone)
+        - [x] Category tabs
+        - [x] Tags display on cards
+        - [x] Edit modal
+        - [x] Delete confirmation
+    - [x] Inbox Actions
+        - [x] LeadActions component
+        - [x] Save contact name
+        - [x] Add reminders
+        - [x] Manage tags
+- [/] Deployment
+    - [x] Create local deploy script
+    - [x] Strategy: Tar+SCP (bypassed rsync)
+    - [x] Run deploy script
+    - [x] Fix Hydration Error (React #418)
+

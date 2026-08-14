@@ -1,0 +1,140 @@
+{
+    "name": "Transcrição de Áudio - Sulma Assistente",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "transcribe",
+                "responseMode": "responseNode",
+                "options": {}
+            },
+            "id": "webhook-trigger",
+            "name": "Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                250,
+                300
+            ],
+            "webhookId": "transcribe-audio"
+        },
+        {
+            "parameters": {
+                "method": "GET",
+                "url": "={{ $json.audioUrl }}",
+                "options": {
+                    "response": {
+                        "response": {
+                            "responseFormat": "file"
+                        }
+                    }
+                }
+            },
+            "id": "download-audio",
+            "name": "Download Áudio",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                470,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "resource": "audio",
+                "operation": "transcribe",
+                "options": {
+                    "language": "pt",
+                    "responseFormat": "text"
+                }
+            },
+            "id": "openai-whisper",
+            "name": "OpenAI Whisper",
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 1.3,
+            "position": [
+                690,
+                300
+            ],
+            "credentials": {
+                "openAiApi": {
+                    "id": "CONFIGURE_AQUI",
+                    "name": "OpenAI API"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ { \"success\": true, \"transcription\": $json.text, \"messageId\": $('Webhook').item.json.messageId } }}"
+            },
+            "id": "respond-webhook",
+            "name": "Responder Webhook",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                910,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ { \"success\": false, \"error\": $json.message || \"Erro na transcrição\" } }}",
+                "options": {
+                    "responseCode": 500
+                }
+            },
+            "id": "error-response",
+            "name": "Erro",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                910,
+                500
+            ]
+        }
+    ],
+    "connections": {
+        "Webhook": {
+            "main": [
+                [
+                    {
+                        "node": "Download Áudio",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Download Áudio": {
+            "main": [
+                [
+                    {
+                        "node": "OpenAI Whisper",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "OpenAI Whisper": {
+            "main": [
+                [
+                    {
+                        "node": "Responder Webhook",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "staticData": null,
+    "tags": [],
+    "triggerCount": 0,
+    "pinData": {}
+}

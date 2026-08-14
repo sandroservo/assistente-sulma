@@ -1,0 +1,456 @@
+{
+  "name": "SDR - ParseMessage",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "```\nRecebe Mensagem  se for audio,  Faza  transcrição  se for imagem, explica a imagem transfoema ambos  em content\n```",
+        "height": 400,
+        "width": 1168
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        352,
+        272
+      ],
+      "typeVersion": 1,
+      "id": "4ade9ff6-3ffd-40f3-8f97-0c89b2bd1a05",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "payload",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        368,
+        448
+      ],
+      "id": "e589bddf-5197-4809-9554-1ad3eaa02bed",
+      "name": "Playload"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.payload.messageType }}",
+                    "rightValue": "={{ 'conversation' || 'extendedTextMessage' }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "746f60ce-1ebb-4951-ab8e-2f17a8647820"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "conversation"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "baa22b50-ee90-4688-b1ae-85d9ae5ae1da",
+                    "leftValue": "={{ $json.payload.messageType }}",
+                    "rightValue": "audioMessage",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "audio"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "8d4f0317-3ec5-4d93-b826-9e0f6c8482c6",
+                    "leftValue": "={{ $json.payload.messageType }}",
+                    "rightValue": "imageMessage",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "image"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        576,
+        448
+      ],
+      "id": "b4ec56a6-8563-4b11-a1bd-7daa3e9170d7",
+      "name": "MessageType"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "70b694c4-7871-4365-9789-8b58697c52b5",
+              "name": "content",
+              "value": "={{ $('Playload').item.json.payload.conversation }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        784,
+        336
+      ],
+      "id": "3b027b2c-bde0-4885-83f0-89c88b1c5d47",
+      "name": "MessageConversation"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Playload').item.json.payload.evolution.serverUrl }}/chat/getBase64FromMediaMessage/{{ $('Playload').item.json.payload.evolution.instance }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Playload').item.json.payload.evolution.apiKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {\n    \"key\": {\n      \"id\": \"{{ $('Playload').item.json.payload.messageId }}\"\n    }\n  }\n} ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        944,
+        464
+      ],
+      "id": "e1046916-9b53-4718-9a32-e52e8d8d044d",
+      "name": "GetAudioBase64"
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "base64",
+        "options": {
+          "fileName": "audio.ogg",
+          "mimeType": "audio/ogg"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1184,
+        464
+      ],
+      "id": "0ed49a38-8df5-49d6-836d-aa23cf4e0db3",
+      "name": "ConvertAudio64ToFile"
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1392,
+        464
+      ],
+      "id": "0cda2579-b9fd-4766-b89d-a9bbc2cfea69",
+      "name": "TranscribeAudio",
+      "credentials": {
+        "openAiApi": {
+          "id": "N1VmF1yIulhXy2Af",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fb949373-70e9-4b56-a6c3-51cdc0f45c82",
+              "name": "content",
+              "value": "={{ $json.text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1600,
+        464
+      ],
+      "id": "ebf51f74-7747-4262-ab78-bd98ab4f99c0",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Playload').item.json.payload.evolution.serverUrl }}/chat/getBase64FromMediaMessage/{{ $('Playload').item.json.payload.evolution.instance }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $('Playload').item.json.payload.evolution.apiKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": {\n    \"key\": {\n      \"id\": \"{{ $('Playload').item.json.payload.messageId }}\"\n    }\n  }\n} ",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        848,
+        656
+      ],
+      "id": "9fb9446b-1bed-4148-b00d-e13c6ca3f81b",
+      "name": "GetImageBase64"
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "base64",
+        "options": {
+          "fileName": "file.jpg",
+          "mimeType": "image/jpeg"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1088,
+        656
+      ],
+      "id": "14a57065-782b-45cf-90cd-f2ad8a9eedff",
+      "name": "ConvertImage64ToFile"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "text": "Descreva o que tem na imagem para auxiliar um agente de iaque irá utilizar sua descrição",
+        "inputType": "base64",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1296,
+        656
+      ],
+      "id": "02fba482-408c-43a7-bc84-66104dea1884",
+      "name": "Analyze image",
+      "credentials": {
+        "openAiApi": {
+          "id": "N1VmF1yIulhXy2Af",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9fbd7f4a-ef00-4c1d-917f-85b93495e031",
+              "name": "content",
+              "value": "={{ $json.content }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1504,
+        656
+      ],
+      "id": "19fdf8bb-db1a-47a4-8711-3209d2d3562d",
+      "name": "Edit Fields1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Playload": {
+      "main": [
+        [
+          {
+            "node": "MessageType",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MessageType": {
+      "main": [
+        [
+          {
+            "node": "MessageConversation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GetAudioBase64",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GetImageBase64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetAudioBase64": {
+      "main": [
+        [
+          {
+            "node": "ConvertAudio64ToFile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ConvertAudio64ToFile": {
+      "main": [
+        [
+          {
+            "node": "TranscribeAudio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TranscribeAudio": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetImageBase64": {
+      "main": [
+        [
+          {
+            "node": "ConvertImage64ToFile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ConvertImage64ToFile": {
+      "main": [
+        [
+          {
+            "node": "Analyze image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze image": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "238c47c3-3a37-484a-b5c5-ca44521bcf8f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "930478b94924cf6d07d840e9945a18c10509ab9c823055fa81d299e36a4727da"
+  },
+  "id": "Yg20hODQrzGpkHVV",
+  "tags": []
+}

@@ -1,0 +1,253 @@
+{
+  "name": "SDR - HiL",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "```\nHuman in loop: Alguem esta atendendo?  Então, para o fluxo por X tempo, se não continuar o Fluxo\n```",
+        "height": 464,
+        "width": 1328,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -512,
+        -240
+      ],
+      "typeVersion": 1,
+      "id": "15359185-e280-4b04-8cf0-61db4e7e4b3a",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "={{ $json.payload.whatsapp }}_block",
+        "value": "true",
+        "expire": true,
+        "ttl": 300
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        128,
+        -160
+      ],
+      "id": "a4b68f72-f2af-499d-a7ff-2f521e547695",
+      "name": "Bloqueia Bot",
+      "credentials": {
+        "redis": {
+          "id": "9UbndBup5tjiaZxu",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "payload",
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -336,
+        -64
+      ],
+      "id": "bdf9ffd9-8729-49e9-bd1d-3efdb37dff2b",
+      "name": "Playload"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "bd0e1abb-6a96-430b-b906-ed2198a3d76b",
+              "leftValue": "={{ $json.payload.fromMe }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -80,
+        -64
+      ],
+      "id": "3a678ef5-d404-4f51-8a57-8e0a660d8a75",
+      "name": "Eu sou ?"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "propertyName": "isBlocked",
+        "key": "={{ $json.payload.whatsapp }}_block",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        128,
+        32
+      ],
+      "id": "1827347a-5b47-427d-97f4-45367ee90bb7",
+      "name": "isBlocked?",
+      "credentials": {
+        "redis": {
+          "id": "9UbndBup5tjiaZxu",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cc776ad8-6afc-4615-bffc-39ac69fe7f00",
+              "name": "isBlocked",
+              "value": "={{ \n!!$json.payload ? true : $json.isBlocked\n}}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        384,
+        -32
+      ],
+      "id": "342b3881-5546-4eab-9f92-633f3f9886e0",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1bec612b-5fcc-4563-bd01-52f983005bd4",
+              "leftValue": "={{ $json.isBlocked }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        592,
+        -32
+      ],
+      "id": "911da5f9-7b7f-406e-9454-88af652adc1c",
+      "name": "ShouldContinue?"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Playload": {
+      "main": [
+        [
+          {
+            "node": "Eu sou ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eu sou ?": {
+      "main": [
+        [
+          {
+            "node": "Bloqueia Bot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "isBlocked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bloqueia Bot": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "isBlocked?": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "ShouldContinue?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b92d5c6a-4bd9-4e30-a90c-69e50a257d93",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "930478b94924cf6d07d840e9945a18c10509ab9c823055fa81d299e36a4727da"
+  },
+  "id": "aO3BhY66T5AxvF9h",
+  "tags": []
+}
