@@ -45,3 +45,6 @@ next-env.d.ts
 
 # midia recebida em runtime — nao versionar
 data/
+
+# credenciais de servidor — nunca versionar
+devops/

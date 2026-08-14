@@ -72,16 +72,17 @@ Na pasta do repositório:
 bash scripts/deploy.sh
 ```
 
-O script vai:
+O script atualiza **somente** a Sulma em `/srv/sulma` (porta **3002**). Não reinicia Manager nem EduRH.
 
-1. Conectar no servidor
-2. Fazer `git pull` em `/www/sulma`
-3. `npm ci`, `npm run build`, reiniciar o serviço `sulma-app`
+1. Envia o código via rsync (preserva `.env`)
+2. `npm ci`, `npx prisma db push`, `npm run build`
+3. Reinicia só o serviço `sulma-app`
 
 ## URLs
 
-- Produção: URL definida em `AUTH_URL`
-- Serviço no servidor: `http://127.0.0.1:3001`
+- Produção: https://assistente.unisulma.edu.br
+- Serviço no servidor: `http://127.0.0.1:3002`
+- Manager: porta 5000 / EduRH: porta 3001 — não alterar
 
 ## Comandos úteis no servidor
 
