@@ -55,13 +55,6 @@ export async function setInstanceWebhook(args: {
   const root = evolutionApiRoot(args.baseUrl);
   const bodies = [
     {
-      enabled: true,
-      url: args.webhookUrl,
-      webhookByEvents: false,
-      webhookBase64: true,
-      events: EVOLUTION_WEBHOOK_EVENTS,
-    },
-    {
       webhook: {
         enabled: true,
         url: args.webhookUrl,
@@ -69,6 +62,13 @@ export async function setInstanceWebhook(args: {
         webhookBase64: true,
         events: EVOLUTION_WEBHOOK_EVENTS,
       },
+    },
+    {
+      enabled: true,
+      url: args.webhookUrl,
+      webhookByEvents: false,
+      webhookBase64: true,
+      events: EVOLUTION_WEBHOOK_EVENTS,
     },
   ];
 

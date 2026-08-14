@@ -1,10 +1,14 @@
 /**
- * Credenciais da Evolution API (global Settings → env).
+ * Credenciais da Evolution API.
+ * URL e token globais vêm das Configurações.
+ * O nome da instância WhatsApp vem SOMENTE do painel (tabela Instance),
+ * nunca do .env (EVOLUTION_INSTANCE / AmoVidas).
  */
 
 import { getSystemSettings } from "@/lib/settings";
 import { getOrganizationSettings } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import type { Instance } from "@prisma/client";
 
 export type EvolutionCredentials = {
   baseUrl: string;
@@ -16,6 +20,40 @@ export function evolutionApiRoot(baseUrl: string): string {
   return baseUrl.replace(/\/api\/?$/, "").replace(/\/$/, "");
 }
 
+export async function resolvePanelInstance(
+  organizationId?: string | null
+): Promise<Instance | null> {
+  const orgFilter = organizationId ? { organizationId } : {};
+
+  return (
+    (await prisma.instance.findFirst({
+      where: { ...orgFilter, isDefault: true, status: "CONNECTED" },
+    })) ||
+    (await prisma.instance.findFirst({
+      where: { ...orgFilter, status: "CONNECTED" },
+      orderBy: { updatedAt: "desc" },
+    })) ||
+    (await prisma.instance.findFirst({
+      where: { ...orgFilter, isDefault: true },
+    })) ||
+    (await prisma.instance.findFirst({
+      where: orgFilter,
+      orderBy: { createdAt: "asc" },
+    }))
+  );
+}
+
+export async function getInstanceForConversation(
+  instanceId?: string | null,
+  organizationId?: string | null
+): Promise<Instance | null> {
+  if (instanceId) {
+    const inst = await prisma.instance.findUnique({ where: { id: instanceId } });
+    if (inst) return inst;
+  }
+  return resolvePanelInstance(organizationId);
+}
+
 export async function getEvolutionCredentials(
   organizationId?: string | null,
   instanceToken?: string | null
@@ -25,31 +63,25 @@ export async function getEvolutionCredentials(
     ? await getOrganizationSettings(organizationId)
     : {};
 
+  const panel = await resolvePanelInstance(organizationId);
+
   const baseUrl =
     org.evolutionBaseUrl ||
     settings.evolutionBaseUrl ||
     process.env.EVOLUTION_BASE_URL ||
     "";
+
   const token =
     instanceToken ||
+    panel?.token ||
     org.evolutionToken ||
     settings.evolutionToken ||
     process.env.EVOLUTION_TOKEN ||
     "";
 
-  const connected = await prisma.instance.findFirst({
-    where: {
-      status: "CONNECTED",
-      ...(organizationId ? { organizationId } : {}),
-    },
-    orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
-  });
-
-  const defaultInstance =
-    connected?.instanceName ||
-    settings.evolutionInstance ||
-    process.env.EVOLUTION_INSTANCE ||
-    "";
-
-  return { baseUrl, token, defaultInstance };
+  return {
+    baseUrl,
+    token,
+    defaultInstance: panel?.instanceName || "",
+  };
 }

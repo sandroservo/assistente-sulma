@@ -34,6 +34,20 @@ export async function POST(req: Request) {
       );
     }
 
+    const knownInstance = payload?.instance
+      ? await prisma.instance.findFirst({
+          where: { instanceName: String(payload.instance) },
+        })
+      : null;
+    if (payload?.instance && !knownInstance) {
+      console.log("[Evolution webhook] ignorada (não é instância do painel):", payload.instance);
+      return NextResponse.json({
+        ok: true,
+        action: "ignored_foreign_instance",
+        instance: payload.instance,
+      });
+    }
+
     // Processa eventos de atualização de status (read receipts)
     const event = payload?.event;
     const eventName = String(event || "").toLowerCase();

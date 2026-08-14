@@ -10,6 +10,7 @@ import { prisma } from "@/lib/prisma";
 import { evolutionSendAudio, evolutionSendPresence } from "@/lib/evolution";
 import { auth } from "@/lib/auth";
 import { saveMedia } from "@/lib/media-storage";
+import { getInstanceForConversation } from "@/lib/evolution-credentials";
 
 export async function POST(req: Request) {
   try {
@@ -34,14 +35,20 @@ export async function POST(req: Request) {
       );
     }
 
-    // Envia presença "gravando áudio" antes de enviar
-    await evolutionSendPresence(convo.lead.phone, "recording").catch(() => {});
+    const inst = await getInstanceForConversation(convo.instanceId, convo.lead.organizationId);
+
+    await evolutionSendPresence(convo.lead.phone, "recording", {
+      instanceName: inst?.instanceName,
+      token: inst?.token || undefined,
+    }).catch(() => {});
 
     try {
       await evolutionSendAudio({
         number: convo.lead.phone,
         base64,
         mimeType: mimeType || "audio/ogg",
+        instanceName: inst?.instanceName,
+        instanceToken: inst?.token || undefined,
       });
     } catch (evolutionError) {
       console.error("[Send Audio] Evolution API error:", evolutionError);

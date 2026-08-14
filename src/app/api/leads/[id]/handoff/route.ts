@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { evolutionSendText } from "@/lib/evolution";
+import { getInstanceForConversation } from "@/lib/evolution-credentials";
 
 export async function POST(
   _req: Request,
@@ -40,7 +41,17 @@ export async function POST(
     const greeting = leadName ? `Olá, ${leadName}!` : "Olá!";
     const handoffMessage = `${greeting} A partir de agora você será atendido(a) por *${agentName}*. Em que posso ajudar?`;
 
-    await evolutionSendText({ number: lead.phone, text: handoffMessage }).catch((err) => {
+    const inst = await getInstanceForConversation(
+      lead.conversations[0]?.instanceId,
+      lead.organizationId
+    );
+
+    await evolutionSendText({
+      number: lead.phone,
+      text: handoffMessage,
+      instanceName: inst?.instanceName,
+      instanceToken: inst?.token || undefined,
+    }).catch((err) => {
       console.error("[Handoff] Erro ao enviar mensagem de aviso:", err);
     });
 

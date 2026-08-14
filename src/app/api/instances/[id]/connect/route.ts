@@ -70,7 +70,7 @@ export async function POST(
         instanceName: instance.instanceName,
         qrcode: true,
         integration: "WHATSAPP-BAILEYS",
-        groupsIgnore: true,
+        groupsIgnore: false,
         alwaysOnline: false,
         readMessages: false,
         syncFullHistory: false,

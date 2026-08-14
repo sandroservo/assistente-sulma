@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { evolutionSendContact } from "@/lib/evolution";
 import { auth } from "@/lib/auth";
+import { getInstanceForConversation } from "@/lib/evolution-credentials";
 
 export async function POST(req: Request) {
   try {
@@ -33,10 +34,14 @@ export async function POST(req: Request) {
       );
     }
 
+    const inst = await getInstanceForConversation(convo.instanceId, convo.lead.organizationId);
+
     try {
       await evolutionSendContact({
         number: convo.lead.phone,
         contacts,
+        instanceName: inst?.instanceName,
+        instanceToken: inst?.token || undefined,
       });
     } catch (error) {
       console.error("[Send Contact] Evolution error:", error);

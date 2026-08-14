@@ -14,10 +14,16 @@ type SendTextArgs = {
 
 async function getEvolutionConfig(override?: { instanceName?: string; token?: string }) {
   const creds = await getEvolutionCredentials(null, override?.token);
+  const instance = override?.instanceName || creds.defaultInstance;
+  if (!instance) {
+    console.warn("[Evolution] Nenhuma instância do painel. Crie e conecte em Configurações → Evolution.");
+  } else {
+    console.log("[Evolution] instância do painel:", instance);
+  }
   return {
     baseUrl: creds.baseUrl,
-    instance: override?.instanceName || creds.defaultInstance,
-    token: creds.token,
+    instance,
+    token: override?.token || creds.token,
   };
 }
 
@@ -98,8 +104,23 @@ export async function evolutionSendText({ number, text, instanceName, instanceTo
 /**
  * Envia áudio (base64) via Evolution API como mensagem de voz (PTT)
  */
-export async function evolutionSendAudio({ number, base64, mimeType }: { number: string; base64: string; mimeType?: string }) {
-  const { baseUrl, instance, token } = await getEvolutionConfig();
+export async function evolutionSendAudio({
+  number,
+  base64,
+  mimeType,
+  instanceName,
+  instanceToken,
+}: {
+  number: string;
+  base64: string;
+  mimeType?: string;
+  instanceName?: string;
+  instanceToken?: string;
+}) {
+  const { baseUrl, instance, token } = await getEvolutionConfig({
+    instanceName,
+    token: instanceToken,
+  });
 
   if (!baseUrl || !instance || !token) {
     throw new Error("Evolution API não configurada (baseUrl, instance ou token faltando)");
@@ -359,13 +380,20 @@ export async function evolutionSendTextWithQuote({
   text,
   quotedId,
   remoteJid,
+  instanceName,
+  instanceToken,
 }: {
   number: string;
   text: string;
   quotedId: string;
   remoteJid: string;
+  instanceName?: string;
+  instanceToken?: string;
 }) {
-  const { baseUrl, instance, token } = await getEvolutionConfig();
+  const { baseUrl, instance, token } = await getEvolutionConfig({
+    instanceName,
+    token: instanceToken,
+  });
   if (!baseUrl || !instance || !token) {
     throw new Error("Evolution API não configurada");
   }
@@ -475,6 +503,8 @@ export async function evolutionFetchPresence(number: string): Promise<{ availabl
 export async function evolutionSendContact({
   number,
   contacts,
+  instanceName,
+  instanceToken,
 }: {
   number: string;
   contacts: Array<{
@@ -483,8 +513,13 @@ export async function evolutionSendContact({
     organization?: string;
     email?: string;
   }>;
+  instanceName?: string;
+  instanceToken?: string;
 }) {
-  const { baseUrl, instance, token } = await getEvolutionConfig();
+  const { baseUrl, instance, token } = await getEvolutionConfig({
+    instanceName,
+    token: instanceToken,
+  });
   if (!baseUrl || !instance || !token) {
     throw new Error("Evolution API não configurada");
   }

@@ -10,6 +10,7 @@ import { prisma } from "@/lib/prisma";
 import { evolutionSendMedia } from "@/lib/evolution";
 import { auth } from "@/lib/auth";
 import { saveMedia } from "@/lib/media-storage";
+import { getInstanceForConversation } from "@/lib/evolution-credentials";
 
 export async function POST(req: Request) {
   try {
@@ -41,6 +42,8 @@ export async function POST(req: Request) {
     if (mime.startsWith("image/")) mediatype = "image";
     else if (mime.startsWith("video/")) mediatype = "video";
 
+    const inst = await getInstanceForConversation(convo.instanceId, convo.lead.organizationId);
+
     try {
       await evolutionSendMedia({
         number: convo.lead.phone,
@@ -49,6 +52,8 @@ export async function POST(req: Request) {
         mimetype: mimeType || "application/octet-stream",
         caption: caption || undefined,
         fileName: fileName || undefined,
+        instanceName: inst?.instanceName,
+        instanceToken: inst?.token || undefined,
       });
     } catch (evolutionError) {
       console.error("[Send Media] Evolution API error:", evolutionError);

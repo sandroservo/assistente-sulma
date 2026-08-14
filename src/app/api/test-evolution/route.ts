@@ -7,13 +7,15 @@
 
 import { NextResponse } from "next/server";
 import { getSystemSettings } from "@/lib/settings";
+import { resolvePanelInstance } from "@/lib/evolution-credentials";
 
 export async function GET() {
   try {
     const settings = await getSystemSettings();
+    const panel = await resolvePanelInstance();
     const baseUrl = settings.evolutionBaseUrl || process.env.EVOLUTION_BASE_URL || "";
-    const instance = settings.evolutionInstance || process.env.EVOLUTION_INSTANCE || "";
-    const token = settings.evolutionToken || process.env.EVOLUTION_TOKEN || "";
+    const instance = panel?.instanceName || "";
+    const token = panel?.token || settings.evolutionToken || process.env.EVOLUTION_TOKEN || "";
 
     if (!baseUrl || !instance || !token) {
       return NextResponse.json({

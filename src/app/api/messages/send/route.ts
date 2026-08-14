@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { evolutionSendText, evolutionSendTextWithQuote } from "@/lib/evolution";
 import { auth } from "@/lib/auth";
+import { getInstanceForConversation } from "@/lib/evolution-credentials";
 
 export async function POST(req: Request) {
   try {
@@ -52,7 +53,9 @@ export async function POST(req: Request) {
       quotedProviderId = quotedMsg?.providerId || null;
     }
 
-    console.log("[Send Message] Sending to:", convo.lead.phone);
+    const inst = await getInstanceForConversation(convo.instanceId, convo.lead.organizationId);
+
+    console.log("[Send Message] Sending to:", convo.lead.phone, "via", inst?.instanceName);
 
     try {
       if (quotedProviderId) {
@@ -61,9 +64,16 @@ export async function POST(req: Request) {
           text: whatsappText,
           quotedId: quotedProviderId,
           remoteJid: convo.remoteJid,
+          instanceName: inst?.instanceName,
+          instanceToken: inst?.token || undefined,
         });
       } else {
-        await evolutionSendText({ number: convo.lead.phone, text: whatsappText });
+        await evolutionSendText({
+          number: convo.lead.phone,
+          text: whatsappText,
+          instanceName: inst?.instanceName,
+          instanceToken: inst?.token || undefined,
+        });
       }
       console.log("[Send Message] Message sent successfully");
     } catch (evolutionError) {
