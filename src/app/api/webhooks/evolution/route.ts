@@ -187,7 +187,9 @@ async function ingestWhatsAppMessage(
         if (!text) text = "[Áudio não transcrito]";
       } else if (messageType === "image" && instanceName && providerId) {
         const media = await evolutionGetMediaBase64(instanceName, providerId);
-        const caption = msg?.imageMessage?.caption ?? "";
+        const caption = String(
+          (msg.imageMessage as { caption?: string } | undefined)?.caption ?? ""
+        );
         if (media) {
           if (media.base64 && media.mimeType) {
             try { savedMediaUrl = await saveMedia(media.base64, media.mimeType); } catch (e) { console.error("Erro ao salvar imagem:", e); }
