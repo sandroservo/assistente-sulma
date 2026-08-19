@@ -75,19 +75,24 @@ export function warmupLimits(
   let daily = dailyLimit;
   let hourly = hourlyLimit;
   if (days <= 2) {
-    daily = Math.min(20, dailyLimit);
-    hourly = Math.min(4, hourlyLimit);
-  } else if (days <= 7) {
-    daily = Math.min(50, dailyLimit);
-    hourly = Math.min(8, hourlyLimit);
-  } else if (days <= 14) {
+    daily = Math.min(30, dailyLimit);
+    hourly = Math.min(10, hourlyLimit);
+    return { daily, hourly, days };
+  }
+  if (days <= 7) {
+    daily = Math.min(60, dailyLimit);
+    hourly = Math.min(hourlyLimit, 15);
+    return { daily, hourly, days };
+  }
+  if (days <= 14) {
     daily = Math.min(90, dailyLimit);
-    hourly = Math.min(12, hourlyLimit);
+    hourly = Math.min(hourlyLimit, 20);
+    return { daily, hourly, days };
   }
 
   return {
-    daily: Math.max(1, Math.floor(daily * cfg.dayMult)),
-    hourly: Math.max(1, Math.floor(hourly * cfg.hourMult)),
+    daily: Math.max(1, Math.floor(dailyLimit * cfg.dayMult)),
+    hourly: Math.max(1, Math.floor(hourlyLimit * cfg.hourMult)),
     days,
   };
 }
@@ -136,6 +141,36 @@ export function instanceHealth(
     return { ok: false, reason: "limite horário", daily, hourly, days };
   }
   return { ok: true, daily, hourly, days };
+}
+
+/** Por que nenhuma instância pode enviar agora (ou null se alguma está saudável). */
+export function poolBlockReason(
+  instances: Instance[],
+  profile: AntiBlockProfile
+): string | null {
+  if (!instances.length) return "Nenhuma instância conectada.";
+  const reports = instances.map((inst) => {
+    const fresh = resetCountersIfNeeded(inst);
+    const health = instanceHealth(fresh, profile);
+    return { fresh, health };
+  });
+  const blocked = reports.filter((r) => !r.health.ok);
+  if (blocked.length < reports.length) return null;
+  const { fresh, health } = blocked[0];
+  switch (health.reason) {
+    case "limite horário":
+      return `Limite horário de proteção (${fresh.sentThisHour}/${health.hourly} nesta hora). Retome quando a hora virar.`;
+    case "limite diário":
+      return `Limite diário de proteção (${fresh.sentToday}/${health.daily}). Retome amanhã.`;
+    case "em pausa preventiva":
+      return "Instância em pausa preventiva após erros. Retome em alguns minutos.";
+    case "muitos erros seguidos":
+      return "Muitos erros seguidos na instância. Verifique o WhatsApp e retome.";
+    case "desconectada":
+      return "Instância desconectada. Reconecte o WhatsApp e retome.";
+    default:
+      return health.reason || "Instância indisponível no momento.";
+  }
 }
 
 export function pickRandomInstance(

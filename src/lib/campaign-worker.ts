@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { evolutionSendText, evolutionSendMedia } from "@/lib/evolution";
 import {
   pickRandomInstance,
+  poolBlockReason,
   computeDelay,
   recordSendSuccess,
   recordSendFailure,
@@ -25,7 +26,6 @@ import type { Campaign, CampaignContact, CampaignRun, CampaignStatus } from "@pr
 
 const MAX_CONSECUTIVE_FAILURES = 5;
 const STALE_CLAIM_MS = 3 * 60 * 1000;
-const NO_INSTANCE_WAIT_MS = 15_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -62,10 +62,6 @@ export async function processCampaignQueue() {
       const profile = safeProfile(job.run.campaign.profile);
       const outcome = await processJob(job);
       if (outcome === "paused") continue;
-      if (outcome === "wait") {
-        await sleep(NO_INSTANCE_WAIT_MS);
-        continue;
-      }
 
       await maybeFinalizeRun(job.runId);
       const stillRunning = await prisma.campaignRun.findFirst({
@@ -111,7 +107,7 @@ async function claimNextJob(): Promise<ClaimedJob | null> {
   });
 }
 
-async function processJob(job: ClaimedJob): Promise<"ok" | "paused" | "wait"> {
+async function processJob(job: ClaimedJob): Promise<"ok" | "paused"> {
   const campaign = job.run.campaign;
 
   if (await isSuppressed(campaign.organizationId, job.phone)) {
@@ -135,7 +131,12 @@ async function processJob(job: ClaimedJob): Promise<"ok" | "paused" | "wait"> {
       where: { id: job.id },
       data: { status: "pending", claimedAt: null },
     });
-    return "wait";
+    const reason =
+      poolBlockReason(pool, safeProfile(campaign.profile)) ||
+      "Instância indisponível no momento.";
+    console.warn("[CampaignWorker] pausando disparo:", job.runId, reason);
+    await pauseRun(job.runId, campaign.id, reason);
+    return "paused";
   }
 
   let inboxId: string | null = null;
@@ -184,6 +185,7 @@ async function processJob(job: ClaimedJob): Promise<"ok" | "paused" | "wait"> {
       where: { id: job.runId },
       data: { sent: { increment: 1 }, consecutiveFailures: 0 },
     });
+    console.log("[CampaignWorker] enviado", { runId: job.runId, phone: job.phone });
     return "ok";
   } catch (error) {
     if (inboxId) await revertMassOutbound(inboxId);
