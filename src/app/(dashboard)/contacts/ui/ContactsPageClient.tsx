@@ -25,6 +25,9 @@ import {
   Trash2,
   Plus,
   UserPlus,
+  FileSpreadsheet,
+  Download,
+  Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -109,6 +112,18 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
   const [newContact, setNewContact] = useState({ name: "", phone: "", email: "", category: "geral", notes: "" });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  const [showImport, setShowImport] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<{
+    created: number;
+    skipped: number;
+    total: number;
+    errors: Array<{ row: number; name?: string; phone?: string; error: string }>;
+  } | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   // Broadcast state
   const [showBroadcast, setShowBroadcast] = useState(false);
@@ -341,6 +356,45 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
     }
   }, [newContact, router]);
 
+  const resetImport = () => {
+    setShowImport(false);
+    setImportFile(null);
+    setImportError(null);
+    setImportResult(null);
+    if (importInputRef.current) importInputRef.current.value = "";
+  };
+
+  const handleImport = useCallback(async () => {
+    if (!importFile) {
+      setImportError("Selecione o arquivo Excel ou CSV.");
+      return;
+    }
+    setImporting(true);
+    setImportError(null);
+    setImportResult(null);
+    try {
+      const body = new FormData();
+      body.append("file", importFile);
+      const res = await fetch("/api/contacts/import", { method: "POST", body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setImportError(data.error || "Erro ao importar a planilha.");
+        return;
+      }
+      setImportResult({
+        created: data.created ?? 0,
+        skipped: data.skipped ?? 0,
+        total: data.total ?? 0,
+        errors: data.errors ?? [],
+      });
+      if ((data.created ?? 0) > 0) router.refresh();
+    } catch {
+      setImportError("Erro de conexão ao importar.");
+    } finally {
+      setImporting(false);
+    }
+  }, [importFile, router]);
+
   const resetBroadcast = () => {
     setShowBroadcast(false);
     setBroadcastMessage("");
@@ -368,7 +422,15 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
           </div>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <Button
+            onClick={() => { setShowImport(true); setImportError(null); setImportResult(null); }}
+            variant="outline"
+            className="border-[#9AADD4] text-[#001A5E] hover:bg-[#EEF2FF]"
+          >
+            <FileSpreadsheet className="w-4 h-4 mr-2" />
+            Importar Excel
+          </Button>
           <Button
             onClick={() => { setShowNewContact(true); setSaveError(null); }}
             variant="outline"
@@ -530,6 +592,112 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
           </div>
         )}
       </div>
+
+      {/* Modal Importar Excel */}
+      {showImport && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#001A5E] to-[#003080] flex items-center justify-center">
+                  <FileSpreadsheet className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-gray-800">Importar Excel</h2>
+                  <p className="text-xs text-gray-500">Baixe o modelo, preencha e envie a planilha</p>
+                </div>
+              </div>
+              <button
+                onClick={resetImport}
+                className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                aria-label="Fechar"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 overflow-y-auto">
+              <a
+                href="/api/contacts/import/template"
+                className="flex items-center justify-between gap-3 rounded-xl border border-[#9AADD4] bg-[#EEF2FF] px-4 py-3 text-sm text-[#001A5E] hover:bg-[#E0E7FF] transition-colors"
+              >
+                <span className="flex items-center gap-2 font-medium">
+                  <Download className="w-4 h-4" />
+                  Baixar modelo Excel
+                </span>
+                <span className="text-xs text-[#001A5E]/70">modelo-contatos-sulma.xlsx</span>
+              </a>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Arquivo (.xlsx, .xls ou .csv)</label>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+                  onChange={(e) => {
+                    setImportFile(e.target.files?.[0] ?? null);
+                    setImportError(null);
+                    setImportResult(null);
+                  }}
+                  className="block w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-[#001A5E] file:text-white hover:file:bg-[#003080] file:cursor-pointer"
+                />
+                {importFile && (
+                  <p className="mt-1.5 text-xs text-gray-500 truncate">{importFile.name}</p>
+                )}
+              </div>
+
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Colunas obrigatórias: <strong>nome</strong> e <strong>telefone</strong>. Telefones já cadastrados são ignorados.
+              </p>
+
+              {importError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">
+                  {importError}
+                </div>
+              )}
+
+              {importResult && (
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-2 text-sm">
+                  <p className="font-semibold text-gray-800">Importação concluída</p>
+                  <p className="text-green-700">{importResult.created} criado(s)</p>
+                  <p className="text-gray-600">{importResult.skipped} já existiam (ignorados)</p>
+                  {importResult.errors.length > 0 && (
+                    <div className="pt-2 border-t border-gray-200">
+                      <p className="text-red-600 font-medium mb-1">{importResult.errors.length} linha(s) com erro</p>
+                      <ul className="max-h-32 overflow-y-auto space-y-1 text-xs text-red-700">
+                        {importResult.errors.slice(0, 30).map((err, i) => (
+                          <li key={i}>
+                            Linha {err.row}: {err.name || err.phone || "—"} — {err.error}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end">
+              <Button variant="outline" onClick={resetImport} disabled={importing}>
+                {importResult ? "Fechar" : "Cancelar"}
+              </Button>
+              {!importResult && (
+                <Button
+                  onClick={handleImport}
+                  disabled={importing || !importFile}
+                  className="bg-[#001A5E] hover:bg-[#003080] text-white"
+                >
+                  {importing ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Importando...</>
+                  ) : (
+                    <><Upload className="w-4 h-4 mr-2" /> Importar</>
+                  )}
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Novo Contato */}
       {showNewContact && (
