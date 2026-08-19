@@ -44,12 +44,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Nome e mensagem são obrigatórios" }, { status: 400 });
   }
 
-  const recurrence = ["NONE", "DAILY", "WEEKLY", "MONTHLY"].includes(body.recurrence)
-    ? body.recurrence
-    : "NONE";
-  const scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
-  const status = scheduledAt ? "SCHEDULED" : "DRAFT";
-
   const campaign = await prisma.campaign.create({
     data: {
       organizationId: session.user.organizationId,
@@ -58,11 +52,10 @@ export async function POST(req: Request) {
       mediaBase64: body.mediaBase64 || null,
       mediaMimeType: body.mediaMimeType || null,
       profile: ["conservative", "balanced", "aggressive"].includes(body.profile) ? body.profile : "balanced",
-      instanceIds: Array.isArray(body.instanceIds) ? body.instanceIds : [],
-      targetFilter: body.targetFilter ?? null,
-      recurrence,
-      scheduledAt,
-      status,
+      instanceIds: [],
+      recurrence: "NONE",
+      scheduledAt: null,
+      status: "DRAFT",
     },
   });
 

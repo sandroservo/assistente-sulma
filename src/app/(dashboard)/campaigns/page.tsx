@@ -1,5 +1,5 @@
 /**
- * Campanhas — disparo em massa recorrente com funil e drill-down de erros.
+ * Campanhas — modelos de mensagem. O disparo é feito em Contatos.
  */
 
 import { getSessionOrRedirect } from "@/lib/auth";
@@ -12,37 +12,21 @@ export default async function CampaignsPage() {
   const session = await getSessionOrRedirect();
   const orgId = session.user.organizationId;
 
-  const [campaigns, instances, categories] = await Promise.all([
-    prisma.campaign.findMany({
-      where: { organizationId: orgId },
-      orderBy: { createdAt: "desc" },
-      include: {
-        runs: {
-          orderBy: { startedAt: "desc" },
-          take: 1,
-          select: { status: true, total: true, sent: true, failed: true, startedAt: true },
-        },
+  const campaigns = await prisma.campaign.findMany({
+    where: { organizationId: orgId },
+    orderBy: { createdAt: "desc" },
+    include: {
+      runs: {
+        orderBy: { startedAt: "desc" },
+        take: 1,
+        select: { status: true, total: true, sent: true, failed: true, startedAt: true },
       },
-    }),
-    prisma.instance.findMany({
-      where: { organizationId: orgId },
-      select: { id: true, name: true, status: true },
-      orderBy: { name: "asc" },
-    }),
-    prisma.lead.findMany({
-      where: { organizationId: orgId },
-      select: { category: true },
-      distinct: ["category"],
-    }),
-  ]);
+    },
+  });
 
   return (
     <div className="p-4 pt-14 md:p-6 md:pt-6 space-y-6 max-w-6xl">
-      <CampaignsManager
-        initialCampaigns={JSON.parse(JSON.stringify(campaigns))}
-        instances={instances}
-        categories={categories.map((c) => c.category).filter(Boolean)}
-      />
+      <CampaignsManager initialCampaigns={JSON.parse(JSON.stringify(campaigns))} />
     </div>
   );
 }

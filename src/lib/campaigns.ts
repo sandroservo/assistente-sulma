@@ -55,26 +55,11 @@ export function nextSchedule(from: Date, recurrence: string): Date | null {
   }
 }
 
-/** Resolve os leads-alvo da campanha a partir do targetFilter ({ category?, status? }). */
-async function resolveTargets(campaign: Campaign): Promise<Array<{ phone: string; name: string | null }>> {
-  const filter = (campaign.targetFilter ?? {}) as { category?: string; status?: string };
-  const leads = await prisma.lead.findMany({
-    where: {
-      organizationId: campaign.organizationId,
-      ownerType: { not: "human" }, // não dispara sobre atendimento humano em curso
-      ...(filter.category ? { category: filter.category } : {}),
-      ...(filter.status ? { status: filter.status as never } : {}),
-    },
-    select: { phone: true, name: true },
-  });
-  return leads;
-}
-
 export type CampaignTarget = { phone: string; name: string | null };
 
 export type RunCampaignOpts = {
-  /** Se informado, dispara só nesta lista (Contatos / planilha). Senão usa o filtro da campanha. */
-  contacts?: CampaignTarget[];
+  /** Destinatários do disparo em massa (obrigatório). */
+  contacts: CampaignTarget[];
   /** Disparo avulso: não mexe em agendamento/recorrência da campanha. */
   skipSchedule?: boolean;
 };
@@ -83,7 +68,7 @@ export type RunCampaignOpts = {
  * Executa uma campanha inteira (bloqueante, com delays anti-bloqueio).
  * Cria um CampaignRun, envia contato a contato e agenda a próxima ocorrência.
  */
-export async function runCampaign(campaignId: string, opts: RunCampaignOpts = {}) {
+export async function runCampaign(campaignId: string, opts: RunCampaignOpts) {
   const prepared = await prepareCampaignRun(campaignId, opts);
   return executeCampaignRun(prepared.runId, {
     skipSchedule: opts.skipSchedule,
@@ -95,12 +80,15 @@ export async function runCampaign(campaignId: string, opts: RunCampaignOpts = {}
  * Cria o run (status RUNNING, contatos pending) e devolve o id para o painel
  * acompanhar em background.
  */
-export async function prepareCampaignRun(campaignId: string, opts: RunCampaignOpts = {}) {
+export async function prepareCampaignRun(campaignId: string, opts: RunCampaignOpts) {
   const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
   if (!campaign) throw new Error("Campanha não encontrada");
   if (campaign.status === "RUNNING") throw new Error("Campanha já está em execução");
+  if (!opts.contacts?.length) {
+    throw new Error("Informe os destinatários no disparo em massa");
+  }
 
-  const rawTargets = opts.contacts?.length ? opts.contacts : await resolveTargets(campaign);
+  const rawTargets = opts.contacts;
   const seen = new Set<string>();
   const targets: CampaignTarget[] = [];
   for (const t of rawTargets) {
@@ -148,7 +136,6 @@ export async function executeCampaignRun(
   const where = {
     organizationId: campaign.organizationId,
     status: "CONNECTED" as const,
-    ...(campaign.instanceIds.length ? { id: { in: campaign.instanceIds } } : {}),
   };
 
   const restoreCampaign = async () => {
