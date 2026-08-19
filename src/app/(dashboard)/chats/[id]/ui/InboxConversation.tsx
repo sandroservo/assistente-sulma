@@ -8,9 +8,10 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, Image as ImageIcon, FileText, Video, Bot, UserCheck, Reply, Pencil, Check, Contact, MessageSquare, Phone } from "lucide-react";
+import { Mic, Image as ImageIcon, FileText, Video, Bot, UserCheck, Reply, Pencil, Check, Contact, MessageSquare, Phone, Megaphone } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
+import { formatPhone } from "@/lib/formatters";
 
 const POLLING_INTERVAL = 15000;
 
@@ -27,6 +28,8 @@ interface Message {
   quotedMessageId?: string | null;
   status?: string | null;
   editedAt?: string | null;
+  source?: string | null;
+  sourceLabel?: string | null;
 }
 
 interface InboxConversationProps {
@@ -44,7 +47,12 @@ interface InboxConversationProps {
     quotedMessageId?: string | null;
     status?: string | null;
     editedAt?: string | null;
+    source?: string | null;
+    sourceLabel?: string | null;
   }>;
+  leadName?: string;
+  leadPhone?: string;
+  contactName?: string;
 }
 
 function formatTime(date: Date | string): string {
@@ -144,6 +152,9 @@ function MessageTypeIcon({ type }: { type: string }) {
 export default function InboxConversation({
   conversationId,
   initialMessages,
+  leadName = "",
+  leadPhone = "",
+  contactName = "",
 }: InboxConversationProps) {
   const [messages, setMessages] = useState<Message[]>(
     initialMessages.map((m) => ({
@@ -159,6 +170,8 @@ export default function InboxConversation({
       quotedMessageId: m.quotedMessageId ?? null,
       status: m.status ?? null,
       editedAt: m.editedAt ?? null,
+      source: m.source ?? null,
+      sourceLabel: m.sourceLabel ?? null,
     }))
   );
   const router = useRouter();
@@ -328,6 +341,7 @@ export default function InboxConversation({
           const isOut = m.direction === "out";
           const isMediaType = m.type !== "text" && m.type !== "contact";
           const isHuman = m.sentByUserName != null;
+          const isMass = m.source === "campaign" || m.source === "broadcast";
           const quoted = getQuotedMessage(m.quotedMessageId);
 
           return (
@@ -361,7 +375,7 @@ export default function InboxConversation({
                   >
                     <Reply className="h-3.5 w-3.5" />
                   </button>
-                  {isOut && m.type === "text" && (
+                  {isOut && m.type === "text" && !isMass && (
                     <button
                       onClick={() => handleEdit(m)}
                       className="p-1.5 rounded-full hover:bg-gray-200/80 text-gray-400 hover:text-gray-600 transition-colors"
@@ -383,11 +397,15 @@ export default function InboxConversation({
                   {isOut ? (
                     <div className={cn(
                       "w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold ring-2 ring-white shadow-sm",
-                      isHuman
+                      isMass
+                        ? "bg-gradient-to-br from-[#FFD600] to-[#F9A825] text-[#001A5E]"
+                        : isHuman
                         ? "bg-gradient-to-br from-purple-500 to-purple-600 text-white"
                         : "bg-gradient-to-br from-[#001A5E] to-[#003080] text-white"
                     )}>
-                      {isHuman
+                      {isMass
+                        ? <Megaphone className="w-4 h-4" />
+                        : isHuman
                         ? m.sentByUserName!.split(" ")[0][0].toUpperCase()
                         : "Sulma"}
                     </div>
@@ -403,12 +421,32 @@ export default function InboxConversation({
                       className={cn(
                         "relative px-4 py-2.5 shadow-sm",
                         isOut
-                          ? isHuman
+                          ? isMass
+                            ? "bg-gradient-to-br from-[#001A5E] to-[#003080] text-white rounded-2xl rounded-tr-md ring-1 ring-[#FFD600]/40"
+                            : isHuman
                             ? "bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-2xl rounded-tr-md"
                             : "bg-gradient-to-br from-[#001A5E] to-[#003080] text-white rounded-2xl rounded-tr-md"
                           : "bg-white text-gray-800 rounded-2xl rounded-tl-md"
                       )}
                     >
+                      {isMass && (
+                        <div className="mb-2 pb-2 border-b border-white/20">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-[#FFD600] flex items-center gap-1">
+                            <Megaphone className="w-3 h-3" />
+                            {m.source === "campaign"
+                              ? `Campanha${m.sourceLabel ? `: ${m.sourceLabel}` : ""}`
+                              : "Disparo em massa"}
+                          </p>
+                          <p className="text-[11px] text-white/90 mt-1 leading-snug">
+                            Lead: <span className="font-semibold">{leadName || "sem nome"}</span>
+                          </p>
+                          <p className="text-[11px] text-white/80 leading-snug">
+                            Contato: <span className="font-semibold">{contactName || leadName || "—"}</span>
+                            {leadPhone ? ` · ${formatPhone(leadPhone)}` : ""}
+                          </p>
+                        </div>
+                      )}
+
                       {/* Quoted message preview */}
                       {quoted && (
                         <div className={cn(
@@ -571,7 +609,9 @@ export default function InboxConversation({
                       isOut ? "text-right" : "text-left"
                     )}>
                       {isOut
-                        ? m.sentByUserName || "Sulma"
+                        ? isMass
+                          ? (m.source === "campaign" ? "Campanha" : "Disparo")
+                          : m.sentByUserName || "Sulma"
                         : "Lead"}
                     </p>
                   </div>

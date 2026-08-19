@@ -18,6 +18,13 @@ import {
   classifySendError,
   type AntiBlockProfile,
 } from "@/lib/anti-block";
+import { saveMedia } from "@/lib/media-storage";
+import {
+  confirmMassOutbound,
+  extractEvolutionMessageId,
+  prepareMassOutbound,
+  revertMassOutbound,
+} from "@/lib/mass-inbox";
 import type { Campaign } from "@prisma/client";
 
 function sleep(ms: number): Promise<void> {
@@ -98,6 +105,17 @@ export async function runCampaign(campaignId: string) {
 
   let sent = 0;
   let failed = 0;
+  let sharedMediaUrl: string | null = null;
+  if (campaign.mediaBase64) {
+    try {
+      sharedMediaUrl = await saveMedia(
+        campaign.mediaBase64,
+        campaign.mediaMimeType || "image/jpeg"
+      );
+    } catch (e) {
+      console.error("[Campaign] falha ao salvar mídia no inbox:", e);
+    }
+  }
 
   for (let i = 0; i < run.contacts.length; i++) {
     const c = run.contacts[i];
@@ -120,14 +138,27 @@ export async function runCampaign(campaignId: string) {
       continue;
     }
 
+    let inboxId: string | null = null;
     try {
+      const inbox = await prepareMassOutbound({
+        organizationId: campaign.organizationId,
+        phone: c.phone,
+        name: c.name,
+        body: campaign.message,
+        mediaUrl: sharedMediaUrl,
+        type: sharedMediaUrl ? "image" : "text",
+        source: "campaign",
+        sourceLabel: campaign.name,
+      });
+      inboxId = inbox.messageId;
+
       await evolutionSendPresence(c.phone, "composing", {
         instanceName: picked.instanceName,
         token: picked.token || undefined,
       }).catch(() => {});
       await sleep(800 + Math.random() * 1800);
 
-      let result: { key?: { id?: string } };
+      let result: unknown;
       if (campaign.mediaBase64) {
         result = await evolutionSendMedia({
           number: c.phone,
@@ -147,13 +178,16 @@ export async function runCampaign(campaignId: string) {
         });
       }
 
+      const providerId = extractEvolutionMessageId(result);
+      await confirmMassOutbound(inboxId, providerId);
       await recordSendSuccess(picked.id);
       sent++;
       await prisma.campaignContact.update({
         where: { id: c.id },
-        data: { status: "sent", providerId: result?.key?.id ?? null, sentAt: new Date() },
+        data: { status: "sent", providerId, sentAt: new Date() },
       });
     } catch (error) {
+      if (inboxId) await revertMassOutbound(inboxId);
       failed++;
       const errMsg = error instanceof Error ? error.message : "Erro desconhecido";
       await recordSendFailure(picked.id, errMsg);

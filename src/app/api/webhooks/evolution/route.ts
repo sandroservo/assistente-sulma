@@ -179,6 +179,33 @@ async function ingestWhatsAppMessage(
       if (already) return { ok: true, action: "deduped" };
     }
 
+    // Disparo/campanha já gravou a mensagem antes do send — eco fromMe não duplica nem assume o bot.
+    if (fromMe) {
+      const digits = String(phone || "").replace(/\D/g, "");
+      const tail = digits.slice(-8);
+      if (tail.length >= 8) {
+        const pending = await prisma.message.findFirst({
+          where: {
+            direction: "out",
+            source: { in: ["campaign", "broadcast"] },
+            createdAt: { gte: new Date(Date.now() - 30 * 60 * 1000) },
+            conversation: { lead: { phone: { contains: tail } } },
+            OR: [{ providerId: null }, ...(providerId ? [{ providerId }] : [])],
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        if (pending) {
+          if (providerId && pending.providerId !== providerId) {
+            await prisma.message.update({
+              where: { id: pending.id },
+              data: { providerId, status: pending.status === "pending" ? "sent" : pending.status },
+            });
+          }
+          return { ok: true, action: "mass_send_echo" };
+        }
+      }
+    }
+
     console.log("[Evolution webhook] mensagem", {
       instance: instanceName,
       fromMe,

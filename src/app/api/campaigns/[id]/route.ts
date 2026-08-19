@@ -30,15 +30,66 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         orderBy: { startedAt: "desc" },
         include: {
           contacts: {
-            where: { status: "failed" }, // drill-down foca nos erros (doc #5)
-            select: { phone: true, name: true, errorKind: true, errorMsg: true },
+            select: {
+              phone: true,
+              name: true,
+              status: true,
+              errorKind: true,
+              errorMsg: true,
+              sentAt: true,
+            },
           },
         },
       },
     },
   });
   if (!campaign) return NextResponse.json({ error: "Não encontrada" }, { status: 404 });
-  return NextResponse.json({ ok: true, campaign });
+
+  const orgId = session.user.organizationId;
+  const allPhones = [...new Set(campaign.runs.flatMap((r) => r.contacts.map((c) => c.phone)))];
+  const tails = [...new Set(allPhones.map((p) => p.replace(/\D/g, "").slice(-8)).filter((t) => t.length >= 8))];
+  const leadOr = tails.map((t) => ({ phone: { contains: t } }));
+  const [leads, saved] = tails.length
+    ? await Promise.all([
+        prisma.lead.findMany({
+          where: { organizationId: orgId, OR: leadOr },
+          select: {
+            name: true,
+            pushName: true,
+            phone: true,
+            conversations: { take: 1, orderBy: { lastMessageAt: "desc" }, select: { id: true } },
+          },
+        }),
+        prisma.savedContact.findMany({
+          where: { organizationId: orgId, OR: leadOr },
+          select: { name: true, phone: true },
+        }),
+      ])
+    : [[], []];
+
+  const byTail = (phone: string) => phone.replace(/\D/g, "").slice(-8);
+  const leadByTail = new Map(leads.map((l) => [byTail(l.phone), l]));
+  const contactByTail = new Map(saved.map((s) => [byTail(s.phone), s]));
+
+  const enriched = {
+    ...campaign,
+    runs: campaign.runs.map((run) => ({
+      ...run,
+      contacts: run.contacts.map((c) => {
+        const tail = byTail(c.phone);
+        const lead = leadByTail.get(tail);
+        const contact = contactByTail.get(tail);
+        return {
+          ...c,
+          leadName: lead?.name || lead?.pushName || c.name || null,
+          contactName: contact?.name || c.name || null,
+          conversationId: lead?.conversations[0]?.id ?? null,
+        };
+      }),
+    })),
+  };
+
+  return NextResponse.json({ ok: true, campaign: enriched });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {

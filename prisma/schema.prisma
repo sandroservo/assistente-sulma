@@ -290,6 +290,8 @@ model Message {
   status           String?          // sent, delivered, read (read receipts)
   editedAt         DateTime?        // Data da última edição
   sentByUserId     String?          // ID do atendente que enviou (null = bot ou lead)
+  source           String?          // campaign | broadcast — disparo em massa
+  sourceLabel      String?          // nome da campanha ou "Disparo em massa"
   sentAt           DateTime?
   createdAt        DateTime         @default(now())
 

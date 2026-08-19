@@ -65,6 +65,7 @@ interface Lead {
   summary: string | null;
   notes: string | null;
   tags: Tag[];
+  contactName?: string | null;
 }
 
 interface ChatPageClientProps {
@@ -87,6 +88,8 @@ interface ChatPageClientProps {
     quotedMessageId?: string | null;
     status?: string | null;
     editedAt?: string | null;
+    source?: string | null;
+    sourceLabel?: string | null;
   }>;
 }
 
@@ -596,6 +599,9 @@ export default function ChatPageClient({
             <InboxConversation
               conversationId={conversationId}
               initialMessages={initialMessages}
+              leadName={lead.name || lead.pushName || ""}
+              leadPhone={lead.phone}
+              contactName={lead.contactName || lead.name || lead.pushName || ""}
             />
             <ChatComposer conversationId={conversationId} onToast={showToast} />
           </div>

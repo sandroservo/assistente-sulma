@@ -64,6 +64,8 @@ export async function GET(
         quotedMessageId: m.quotedMessageId ?? null,
         status: m.status ?? null,
         editedAt: m.editedAt ? m.editedAt.toISOString() : null,
+        source: m.source ?? null,
+        sourceLabel: m.sourceLabel ?? null,
       })),
       lead: {
         id: conversation.lead.id,

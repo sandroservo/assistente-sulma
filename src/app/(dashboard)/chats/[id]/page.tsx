@@ -44,6 +44,15 @@ export default async function ChatDetailPage({
     data: { unreadCount: 0 },
   });
 
+  const savedContact = await prisma.savedContact.findFirst({
+    where: {
+      organizationId: convo.lead.organizationId,
+      phone: { contains: convo.lead.phone.replace(/\D/g, "").slice(-8) || convo.lead.phone },
+    },
+    select: { name: true },
+    orderBy: { updatedAt: "desc" },
+  });
+
   const lead = {
     id: convo.lead.id,
     organizationId: convo.lead.organizationId,
@@ -59,6 +68,7 @@ export default async function ChatDetailPage({
     summary: convo.lead.summary,
     notes: convo.lead.notes,
     tags: convo.lead.tags,
+    contactName: savedContact?.name ?? null,
   };
 
   const messages = (convo.messages as any[]).map((m) => ({
@@ -74,6 +84,8 @@ export default async function ChatDetailPage({
     quotedMessageId: m.quotedMessageId ?? null,
     status: m.status ?? null,
     editedAt: m.editedAt ? m.editedAt.toISOString() : null,
+    source: m.source ?? null,
+    sourceLabel: m.sourceLabel ?? null,
   }));
 
   return (

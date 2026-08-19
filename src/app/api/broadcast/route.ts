@@ -16,6 +16,13 @@ import {
   formatWait,
   type AntiBlockProfile,
 } from "@/lib/anti-block";
+import { saveMedia } from "@/lib/media-storage";
+import {
+  confirmMassOutbound,
+  extractEvolutionMessageId,
+  prepareMassOutbound,
+  revertMassOutbound,
+} from "@/lib/mass-inbox";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -87,6 +94,14 @@ export async function POST(req: Request) {
 
     const shuffled = [...contacts].sort(() => Math.random() - 0.5);
     const encoder = new TextEncoder();
+    let sharedMediaUrl: string | null = null;
+    if (imageBase64) {
+      try {
+        sharedMediaUrl = await saveMedia(imageBase64, imageMimeType || "image/jpeg");
+      } catch (e) {
+        console.error("[Broadcast] falha ao salvar mídia no inbox:", e);
+      }
+    }
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -138,15 +153,29 @@ export async function POST(req: Request) {
             continue;
           }
 
+          let inboxId: string | null = null;
           try {
+            const inbox = await prepareMassOutbound({
+              organizationId: session.user.organizationId,
+              phone: contact.phone,
+              name: contact.name,
+              body: message,
+              mediaUrl: sharedMediaUrl,
+              type: sharedMediaUrl ? "image" : "text",
+              source: "broadcast",
+              sourceLabel: "Disparo em massa",
+            });
+            inboxId = inbox.messageId;
+
             await evolutionSendPresence(contact.phone, "composing", {
               instanceName: picked.instanceName,
               token: picked.token || undefined,
             }).catch(() => {});
             await sleep(800 + Math.random() * 1800);
 
+            let result: unknown;
             if (imageBase64) {
-              await evolutionSendMedia({
+              result = await evolutionSendMedia({
                 number: contact.phone,
                 mediatype: "image",
                 media: imageBase64,
@@ -156,7 +185,7 @@ export async function POST(req: Request) {
                 instanceToken: picked.token || undefined,
               });
             } else {
-              await evolutionSendText({
+              result = await evolutionSendText({
                 number: contact.phone,
                 text: message,
                 instanceName: picked.instanceName,
@@ -164,6 +193,7 @@ export async function POST(req: Request) {
               });
             }
 
+            await confirmMassOutbound(inboxId, extractEvolutionMessageId(result));
             await recordSendSuccess(picked.id);
             sent++;
             send({
@@ -174,10 +204,15 @@ export async function POST(req: Request) {
               failed,
               skipped,
               contact: contact.name || contact.phone,
+              leadName: inbox.leadName,
+              contactName: inbox.contactName,
+              phone: inbox.phone,
+              conversationId: inbox.conversationId,
               instance: picked.name,
               status: "ok",
             });
           } catch (error) {
+            if (inboxId) await revertMassOutbound(inboxId);
             failed++;
             const errMsg = error instanceof Error ? error.message : "Erro desconhecido";
             const kind = await recordSendFailure(picked.id, errMsg);

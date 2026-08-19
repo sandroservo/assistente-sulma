@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, Play, Trash2, XCircle, ChevronDown, Send, Repeat, Clock } from "lucide-react";
+import { Loader2, Play, Trash2, XCircle, ChevronDown, Send, Repeat, Clock, MessageSquare, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,7 +23,16 @@ type Campaign = {
   runs: RunSummary[];
 };
 type Instance = { id: string; name: string; status: string };
-type FailedContact = { phone: string; name: string | null; errorKind: string | null; errorMsg: string | null };
+type FailedContact = {
+  phone: string;
+  name: string | null;
+  status?: string;
+  errorKind: string | null;
+  errorMsg: string | null;
+  leadName?: string | null;
+  contactName?: string | null;
+  conversationId?: string | null;
+};
 
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: "Rascunho",
@@ -62,7 +71,7 @@ export function CampaignsManager({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [failedByCampaign, setFailedByCampaign] = useState<Record<string, FailedContact[]>>({});
+  const [recipientsByCampaign, setRecipientsByCampaign] = useState<Record<string, FailedContact[]>>({});
 
   // form
   const [name, setName] = useState("");
@@ -151,15 +160,15 @@ export function CampaignsManager({
     } finally { setBusyId(null); }
   }
 
-  async function toggleErrors(id: string) {
+  async function toggleRecipients(id: string) {
     if (expanded === id) { setExpanded(null); return; }
     setExpanded(id);
-    if (!failedByCampaign[id]) {
+    if (!recipientsByCampaign[id]) {
       const res = await fetch(`/api/campaigns/${id}`);
       const data = await res.json();
       if (data.ok) {
-        const failed: FailedContact[] = data.campaign.runs.flatMap((r: { contacts: FailedContact[] }) => r.contacts);
-        setFailedByCampaign((prev) => ({ ...prev, [id]: failed }));
+        const recipients: FailedContact[] = data.campaign.runs.flatMap((r: { contacts: FailedContact[] }) => r.contacts);
+        setRecipientsByCampaign((prev) => ({ ...prev, [id]: recipients }));
       }
     }
   }
@@ -299,22 +308,45 @@ export function CampaignsManager({
                   <span className="text-green-600">Enviados: <b>{run.sent}</b></span>
                   <span className="text-red-600">Erros: <b>{run.failed}</b></span>
                   <span className="text-muted-foreground">Último: {fmt(run.startedAt)}</span>
-                  {run.failed > 0 && (
-                    <button onClick={() => toggleErrors(c.id)} className="flex items-center gap-1 text-blue-600">
-                      Ver erros <ChevronDown className={`h-3 w-3 transition ${expanded === c.id ? "rotate-180" : ""}`} />
-                    </button>
-                  )}
+                  <button onClick={() => toggleRecipients(c.id)} className="flex items-center gap-1 text-blue-600">
+                    Ver quem recebeu <ChevronDown className={`h-3 w-3 transition ${expanded === c.id ? "rotate-180" : ""}`} />
+                  </button>
                 </div>
               )}
 
               {expanded === c.id && (
-                <div className="rounded border bg-muted/30 p-2 text-xs">
-                  {!failedByCampaign[c.id] && <p className="text-muted-foreground">Carregando...</p>}
-                  {failedByCampaign[c.id]?.length === 0 && <p className="text-muted-foreground">Sem erros registrados.</p>}
-                  {failedByCampaign[c.id]?.map((f, i) => (
-                    <div key={i} className="flex justify-between gap-2 border-b py-1 last:border-0">
-                      <span>{f.name || f.phone}</span>
-                      <span className="text-red-600">{f.errorKind || "erro"}: {f.errorMsg?.slice(0, 80)}</span>
+                <div className="rounded border bg-muted/30 p-2 text-xs space-y-1">
+                  {!recipientsByCampaign[c.id] && <p className="text-muted-foreground">Carregando...</p>}
+                  {recipientsByCampaign[c.id]?.length === 0 && <p className="text-muted-foreground">Nenhum destinatário nesta execução.</p>}
+                  {recipientsByCampaign[c.id]?.map((f, i) => (
+                    <div key={i} className="flex items-start justify-between gap-2 border-b py-1.5 last:border-0">
+                      <div className="min-w-0">
+                        <p className="font-medium text-gray-800">
+                          Lead: {f.leadName || f.name || "sem nome"}
+                        </p>
+                        <p className="text-muted-foreground">
+                          Contato: {f.contactName || f.name || "—"} · {f.phone}
+                        </p>
+                        {f.status === "failed" && (
+                          <p className="text-red-600">{f.errorKind || "erro"}: {f.errorMsg?.slice(0, 80)}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {f.status === "sent" ? (
+                          <span className="inline-flex items-center gap-1 text-green-600">
+                            <CheckCircle2 className="h-3 w-3" /> enviado
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-red-600">
+                            <XCircle className="h-3 w-3" /> falhou
+                          </span>
+                        )}
+                        {f.conversationId && (
+                          <a href={`/chats/${f.conversationId}`} className="inline-flex items-center gap-1 text-[#001A5E] font-medium">
+                            <MessageSquare className="h-3 w-3" /> chat
+                          </a>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

@@ -53,6 +53,10 @@ interface BroadcastLog {
   status: "ok" | "error" | "waiting";
   message?: string;
   instance?: string;
+  leadName?: string;
+  contactName?: string;
+  phone?: string;
+  conversationId?: string;
 }
 
 type BroadcastProfile = "conservative" | "balanced" | "aggressive";
@@ -262,6 +266,10 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
                   status: data.status,
                   message: data.error,
                   instance: data.instance,
+                  leadName: data.leadName,
+                  contactName: data.contactName,
+                  phone: data.phone,
+                  conversationId: data.conversationId,
                 },
               ]);
             } else if (data.type === "waiting") {
@@ -827,20 +835,35 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
                   <div className="bg-gray-50 rounded-xl border border-gray-200 max-h-60 overflow-y-auto">
                     <div className="p-3 space-y-1.5">
                       {broadcastLogs.map((log, i) => (
-                        <div key={i} className="flex items-center gap-2 text-xs">
-                          {log.status === "ok" && <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />}
-                          {log.status === "error" && <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />}
-                          {log.status === "waiting" && <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
-                          <span className={cn(
-                            "truncate",
-                            log.status === "ok" && "text-gray-700",
-                            log.status === "error" && "text-red-600",
-                            log.status === "waiting" && "text-amber-600"
-                          )}>
-                            {log.status === "waiting"
-                              ? log.message
-                              : `${log.contact}${log.instance ? ` · ${log.instance}` : ""}${log.message ? ` — ${log.message}` : ""}`}
-                          </span>
+                        <div key={i} className="flex items-start gap-2 text-xs">
+                          {log.status === "ok" && <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0 mt-0.5" />}
+                          {log.status === "error" && <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />}
+                          {log.status === "waiting" && <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />}
+                          <div className="min-w-0 flex-1">
+                            {log.status === "waiting" ? (
+                              <span className="text-amber-600">{log.message}</span>
+                            ) : (
+                              <>
+                                <p className={cn(
+                                  "truncate",
+                                  log.status === "ok" && "text-gray-700",
+                                  log.status === "error" && "text-red-600"
+                                )}>
+                                  Lead: {log.leadName || log.contact}
+                                  {" · "}
+                                  Contato: {log.contactName || log.contact}
+                                  {log.phone ? ` (${formatPhone(log.phone)})` : ""}
+                                  {log.instance ? ` · ${log.instance}` : ""}
+                                  {log.message ? ` — ${log.message}` : ""}
+                                </p>
+                                {log.conversationId && log.status === "ok" && (
+                                  <Link href={`/chats/${log.conversationId}`} className="text-[#001A5E] font-medium hover:underline">
+                                    Abrir chat
+                                  </Link>
+                                )}
+                              </>
+                            )}
+                          </div>
                         </div>
                       ))}
                       <div ref={logsEndRef} />
