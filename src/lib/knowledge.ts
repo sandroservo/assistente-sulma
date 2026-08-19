@@ -7,6 +7,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
+import { semanticSearchKnowledge, indexKnowledge } from "@/lib/embeddings";
 
 export interface KnowledgeItem {
   id: string;
@@ -42,6 +43,12 @@ export async function searchKnowledge(
   limit: number = 5,
   organizationId?: string
 ): Promise<KnowledgeItem[]> {
+  // RAG: tenta busca semântica (pgvector) primeiro; cai no keyword se indisponível.
+  const semantic = await semanticSearchKnowledge(query, category, limit, organizationId);
+  if (semantic && semantic.length > 0) {
+    return semantic;
+  }
+
   const words = query
     .toLowerCase()
     .split(/\s+/)
@@ -111,7 +118,7 @@ export async function createKnowledge(data: {
   keywords?: string;
   priority?: number;
 }): Promise<KnowledgeItem> {
-  return prisma.knowledge.create({
+  const created = await prisma.knowledge.create({
     data: {
       organizationId: data.organizationId,
       category: data.category,
@@ -121,6 +128,9 @@ export async function createKnowledge(data: {
       priority: data.priority ?? 0,
     },
   });
+  // Indexa em background — não bloqueia o cadastro nem quebra se o RAG estiver off.
+  indexKnowledge(created.id).catch(() => {});
+  return created;
 }
 
 /**
@@ -137,10 +147,15 @@ export async function updateKnowledge(
     active: boolean;
   }>
 ): Promise<KnowledgeItem> {
-  return prisma.knowledge.update({
+  const updated = await prisma.knowledge.update({
     where: { id },
     data,
   });
+  // Reindexa se o conteúdo relevante mudou.
+  if (data.title !== undefined || data.content !== undefined || data.keywords !== undefined) {
+    indexKnowledge(id).catch(() => {});
+  }
+  return updated;
 }
 
 /**

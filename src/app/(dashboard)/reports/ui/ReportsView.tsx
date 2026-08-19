@@ -26,9 +26,11 @@ import {
   Headphones,
   Layers,
   MessageSquareOff,
+  Eye,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { LEAD_STATUS_LABELS, LEAD_STATUS_COLORS } from "@/lib/lead-funnel";
 
 interface UserStat {
   id: string;
@@ -61,6 +63,7 @@ interface Stats {
   leadsByStatus: LeadByStatus[];
   messagesIn: number;
   messagesOut: number;
+  messagesRead: number;
   totalHandoffs: number;
   completedHandoffs: number;
   conversationsOpen: number;
@@ -68,33 +71,32 @@ interface Stats {
   sectorsDistribution: SectorDist[];
 }
 
+interface OrgSla {
+  tmeSeconds: number;
+  tmaSeconds: number;
+  tmrSeconds: number;
+}
+
 interface ReportsViewProps {
   userStats: UserStat[];
   stats: Stats;
   days: number;
+  sla?: OrgSla;
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  NOVO: "Novo",
-  EM_ATENDIMENTO: "Em Atendimento",
-  QUALIFICADO: "Qualificado",
-  LEAD_FRIO: "Lead Frio",
-  FECHADO: "Fechado",
-  PERDIDO: "Perdido",
-  HUMANO_SOLICITADO: "Aguardando Humano",
-};
+function fmtDuration(sec: number): string {
+  if (!sec || sec <= 0) return "—";
+  if (sec < 60) return `${Math.round(sec)}s`;
+  if (sec < 3600) return `${Math.round(sec / 60)}min`;
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
+  return m ? `${h}h ${m}min` : `${h}h`;
+}
 
-const STATUS_COLORS: Record<string, string> = {
-  NOVO: "bg-[#E8EDF8] text-[#001A5E]",
-  EM_ATENDIMENTO: "bg-orange-100 text-orange-700",
-  QUALIFICADO: "bg-blue-100 text-blue-700",
-  LEAD_FRIO: "bg-slate-100 text-slate-700",
-  FECHADO: "bg-green-100 text-green-700",
-  PERDIDO: "bg-red-100 text-red-700",
-  HUMANO_SOLICITADO: "bg-yellow-100 text-yellow-700",
-};
+const STATUS_LABELS = LEAD_STATUS_LABELS;
+const STATUS_COLORS = LEAD_STATUS_COLORS;
 
-export function ReportsView({ userStats, stats, days }: ReportsViewProps) {
+export function ReportsView({ userStats, stats, days, sla }: ReportsViewProps) {
   const router = useRouter();
   const totalConv = stats.conversationsOpen + stats.conversationsClosed;
   const closeRate = totalConv > 0 ? Math.round((stats.conversationsClosed / totalConv) * 100) : 0;
@@ -161,6 +163,27 @@ export function ReportsView({ userStats, stats, days }: ReportsViewProps) {
         </Card>
       </div>
 
+      {/* SLA: TME / TMA / TMR (doc §5.2) */}
+      {sla && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card className="p-5">
+            <p className="text-sm text-gray-500">Tempo Médio de Espera (TME)</p>
+            <p className="text-2xl font-bold text-gray-800">{fmtDuration(sla.tmeSeconds)}</p>
+            <p className="text-[11px] text-gray-400">fila → primeiro atendimento</p>
+          </Card>
+          <Card className="p-5">
+            <p className="text-sm text-gray-500">Tempo Médio de Atendimento (TMA)</p>
+            <p className="text-2xl font-bold text-gray-800">{fmtDuration(sla.tmaSeconds)}</p>
+            <p className="text-[11px] text-gray-400">início → encerramento</p>
+          </Card>
+          <Card className="p-5">
+            <p className="text-sm text-gray-500">Tempo Médio de Resposta (TMR)</p>
+            <p className="text-2xl font-bold text-gray-800">{fmtDuration(sla.tmrSeconds)}</p>
+            <p className="text-[11px] text-gray-400">contato → resposta do agente</p>
+          </Card>
+        </div>
+      )}
+
       {/* Conversas por setor */}
       {stats.sectorsDistribution.length > 0 && (
         <Card className="p-5">
@@ -189,7 +212,7 @@ export function ReportsView({ userStats, stats, days }: ReportsViewProps) {
       )}
 
       {/* Cards de métricas */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         <Card className="p-5">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#001A5E] to-[#003080] flex items-center justify-center">
@@ -222,6 +245,23 @@ export function ReportsView({ userStats, stats, days }: ReportsViewProps) {
             <div>
               <p className="text-sm text-gray-500">Mensagens Enviadas</p>
               <p className="text-2xl font-bold text-gray-800">{stats.messagesOut}</p>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-sky-500 to-sky-600 flex items-center justify-center">
+              <Eye className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <p className="text-sm text-gray-500">Mensagens Visualizadas</p>
+              <p className="text-2xl font-bold text-gray-800">{stats.messagesRead}</p>
+              <p className="text-xs text-gray-400">
+                {stats.messagesOut > 0
+                  ? `${Math.round((stats.messagesRead / stats.messagesOut) * 100)}% das enviadas`
+                  : "enviadas com visto"}
+              </p>
             </div>
           </div>
         </Card>
@@ -345,7 +385,7 @@ export function ReportsView({ userStats, stats, days }: ReportsViewProps) {
                     <div className="bg-emerald-50 rounded-lg p-2.5 text-center">
                       <CheckCircle2 className="w-4 h-4 text-emerald-500 mx-auto mb-1" />
                       <p className="text-lg font-bold text-emerald-700">{user.leadsClosed}</p>
-                      <p className="text-[10px] text-emerald-500 leading-tight">Fechados</p>
+                      <p className="text-[10px] text-emerald-500 leading-tight">Matrículas</p>
                     </div>
                   </div>
 

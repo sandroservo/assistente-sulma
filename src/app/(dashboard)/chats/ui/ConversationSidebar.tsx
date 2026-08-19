@@ -12,6 +12,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Search, Bot, UserCheck, MessageSquare, X, MessageCircle, Pin, PinOff, Bell, BellOff, ChevronDown, Plus, MailOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LeadAvatar } from "@/components/LeadAvatar";
+import { slaLevel, slaLabel } from "@/lib/sla";
 
 interface Conversation {
   id: string;
@@ -559,6 +560,18 @@ export default function ConversationSidebar({
                     >
                       {conv.isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
                     </span>
+                    {/* Semáforo de SLA: só quando o contato está esperando resposta (não lida e não encerrada) */}
+                    {conv.unreadCount > 0 && conv.convStatus !== "closed" && (() => {
+                      const s = slaLevel(conv.lastMessageAt);
+                      if (s.level === "ok") return null;
+                      return (
+                        <span
+                          className="w-2 h-2 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: s.color }}
+                          title={`Esperando resposta — ${slaLabel(s.minutes)}`}
+                        />
+                      );
+                    })()}
                     <span className={cn(
                       "text-[11px]",
                       conv.unreadCount > 0 ? "text-[#001A5E] font-semibold" : "text-gray-400"

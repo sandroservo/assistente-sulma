@@ -26,6 +26,9 @@ import {
   Contact,
   Menu,
   X,
+  LayoutGrid,
+  Megaphone,
+  Workflow,
 } from "lucide-react";
 
 const navItems = [
@@ -33,6 +36,9 @@ const navItems = [
   { href: "/chats", icon: MessageSquare, label: "Chats" },
   { href: "/contacts", icon: Contact, label: "Contatos" },
   { href: "/kanban", icon: ClipboardList, label: "Kanban" },
+  { href: "/info-cards", icon: LayoutGrid, label: "Cards Informativos" },
+  { href: "/campaigns", icon: Megaphone, label: "Campanhas" },
+  { href: "/flows", icon: Workflow, label: "Fluxos" },
   { href: "/knowledge", icon: BookOpen, label: "Conhecimento" },
   { href: "/users", icon: Users, label: "Usuários" },
   { href: "/reports", icon: BarChart3, label: "Relatórios" },

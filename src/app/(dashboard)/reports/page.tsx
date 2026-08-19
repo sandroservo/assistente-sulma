@@ -9,6 +9,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { ReportsView } from "./ui/ReportsView";
+import { computeOrgSla } from "@/lib/sla-server";
 
 export default async function ReportsPage({
   searchParams,
@@ -83,6 +84,17 @@ export default async function ReportsPage({
     _count: true,
   });
 
+  const messagesRead = await prisma.message.count({
+    where: {
+      direction: "out",
+      status: "read",
+      createdAt: { gte: thirtyDaysAgo },
+      conversation: {
+        lead: { organizationId: session.user.organizationId },
+      },
+    },
+  });
+
   // Mensagens enviadas por usuário (30 dias)
   const messagesByUser = await prisma.message.groupBy({
     by: ["sentByUserId"],
@@ -114,8 +126,8 @@ export default async function ReportsPage({
   const conversionsPerUser = await prisma.$queryRaw<Array<{ user_id: string; qualified: bigint; closed: bigint }>>`
     SELECT 
       h."assignedToId" as user_id,
-      COUNT(DISTINCT CASE WHEN l.status IN ('QUALIFICADO', 'EM_NEGOCIACAO', 'PROPOSTA_ENVIADA') THEN l.id END) as qualified,
-      COUNT(DISTINCT CASE WHEN l.status = 'FECHADO' THEN l.id END) as closed
+      COUNT(DISTINCT CASE WHEN l.status IN ('QUALIFICAR', 'QUALIFICADO', 'REGISTRAR', 'EM_NEGOCIACAO', 'PROPOSTA_ENVIADA') THEN l.id END) as qualified,
+      COUNT(DISTINCT CASE WHEN l.status IN ('CONDUZIR_MATRICULA', 'FECHADO') THEN l.id END) as closed
     FROM "Handoff" h
     JOIN "Lead" l ON l.id = h."leadId"
     WHERE h."assignedToId" IS NOT NULL
@@ -185,6 +197,7 @@ export default async function ReportsPage({
     })),
     messagesIn: messages.find((m: typeof messages[number]) => m.direction === "in")?._count || 0,
     messagesOut: messages.find((m: typeof messages[number]) => m.direction === "out")?._count || 0,
+    messagesRead,
     totalHandoffs: handoffs.length,
     completedHandoffs: handoffs.filter((h: typeof handoffs[number]) => h.status === "closed").length,
     conversationsOpen,
@@ -192,12 +205,15 @@ export default async function ReportsPage({
     sectorsDistribution,
   };
 
+  const sla = await computeOrgSla(session.user.organizationId, thirtyDaysAgo);
+
   return (
     <div className="p-4 pt-14 md:p-6 md:pt-6">
       <ReportsView
         userStats={userStats}
         stats={stats}
         days={days}
+        sla={sla}
       />
     </div>
   );

@@ -49,6 +49,9 @@ model Organization {
   settings         OrgSettings[]
   excludedContacts ExcludedContact[]
   tags             Tag[]
+  infoCards        InfoCard[]
+  campaigns        Campaign[]
+  flows            Flow[]
 }
 
 model User {
@@ -153,6 +156,11 @@ enum LeadStatus {
   PERDIDO
   HUMANO_SOLICITADO
   HUMANO_EM_ATENDIMENTO
+  ENTENDER
+  ORIENTAR
+  QUALIFICAR
+  REGISTRAR
+  CONDUZIR_MATRICULA
 }
 
 enum OwnerType {
@@ -347,6 +355,8 @@ model Knowledge {
   keywords       String?  // palavras-chave separadas por vírgula
   priority       Int      @default(0) // prioridade na busca
   active         Boolean  @default(true)
+  // Embedding p/ RAG (pgvector). Unsupported: gerenciado via SQL raw (embeddings.ts).
+  embedding      Unsupported("vector(1536)")?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -371,6 +381,117 @@ model LeadMemory {
   @@unique([leadId, key])
   @@index([leadId])
   @@index([type])
+}
+
+model InfoCard {
+  id             String   @id @default(cuid())
+  organizationId String
+  title          String
+  filename       String
+  mimeType       String   @default("image/jpeg")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// ==========================================
+// CAMPANHAS (disparo em massa recorrente)
+// ==========================================
+
+enum CampaignStatus {
+  DRAFT       // rascunho, não agendada
+  SCHEDULED   // aguardando execução (scheduledAt)
+  RUNNING     // executando agora
+  DONE        // concluída (sem recorrência)
+  CANCELLED
+}
+
+enum CampaignRecurrence {
+  NONE
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+model Campaign {
+  id             String             @id @default(cuid())
+  organizationId String
+  name           String
+  message        String             @db.Text
+  mediaBase64    String?            @db.Text // imagem opcional (mesmo formato do broadcast)
+  mediaMimeType  String?
+  profile        String             @default("balanced") // AntiBlockProfile: conservative|balanced|aggressive
+  instanceIds    String[]           // instâncias permitidas (vazio = todas conectadas)
+  targetFilter   Json?              // filtro sobre Leads: { category?, status? }
+  status         CampaignStatus     @default(DRAFT)
+  recurrence     CampaignRecurrence @default(NONE)
+  scheduledAt    DateTime?          // próxima execução
+  lastRunAt      DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  runs         CampaignRun[]
+
+  @@index([organizationId])
+  @@index([status, scheduledAt])
+}
+
+// Cada execução de uma campanha (recorrente => vários runs, cada um com seu funil)
+model CampaignRun {
+  id         String         @id @default(cuid())
+  campaignId String
+  status     CampaignStatus @default(RUNNING) // RUNNING | DONE | CANCELLED
+  total      Int            @default(0)
+  sent       Int            @default(0)
+  failed     Int            @default(0)
+  startedAt  DateTime       @default(now())
+  finishedAt DateTime?
+
+  campaign Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contacts CampaignContact[]
+
+  @@index([campaignId])
+}
+
+model CampaignContact {
+  id         String    @id @default(cuid())
+  runId      String
+  phone      String
+  name       String?
+  status     String    @default("pending") // pending | sent | delivered | read | failed
+  errorKind  String?   // invalid_number | blocked | transient | unknown
+  errorMsg   String?   @db.Text
+  providerId String?   // id da mensagem na Evolution (p/ casar entregue/lido via webhook)
+  sentAt     DateTime?
+
+  run CampaignRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([providerId])
+}
+
+// ==========================================
+// FLUXOS (editor visual de chatbot — MVP)
+// ==========================================
+
+model Flow {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  active         Boolean  @default(false)
+  // Grafo React Flow: { nodes: [...], edges: [...] }. MVP guarda inline;
+  // se precisar consultar nós isolados, migrar p/ tabela FlowNode.
+  graph          Json     @default("{\"nodes\": [], \"edges\": []}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
 }
 
 // Log de webhooks Asaas (auditoria e debug)
