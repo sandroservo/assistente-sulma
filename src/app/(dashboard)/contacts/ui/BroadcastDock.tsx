@@ -189,7 +189,7 @@ export function BroadcastDock({
                 : paused
                   ? "Pausado automaticamente"
                   : waiting
-                    ? `Aguardando a hora virar · continua ${waitingUntil?.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`
+                    ? (run?.waitReason || `Aguardando · continua ${waitingUntil?.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })}`)
                     : sendingCount > 0
                       ? `Enviando agora${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`
                       : `Na fila${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`}

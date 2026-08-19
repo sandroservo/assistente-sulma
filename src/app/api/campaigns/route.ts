@@ -51,7 +51,7 @@ export async function POST(req: Request) {
       message: body.message.trim(),
       mediaBase64: body.mediaBase64 || null,
       mediaMimeType: body.mediaMimeType || null,
-      profile: ["conservative", "balanced", "aggressive"].includes(body.profile) ? body.profile : "balanced",
+      profile: ["conservative", "balanced", "aggressive"].includes(body.profile) ? body.profile : "conservative",
       instanceIds: [],
       recurrence: "NONE",
       scheduledAt: null,

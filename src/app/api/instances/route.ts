@@ -32,7 +32,7 @@ export async function GET() {
       orderBy: { createdAt: "desc" },
     });
 
-    const profile: AntiBlockProfile = "balanced";
+    const profile: AntiBlockProfile = "conservative";
     const payload = instances.map((inst) => {
       const fresh = resetCountersIfNeeded(inst);
       const health = instanceHealth(fresh, profile);
@@ -96,8 +96,8 @@ export async function POST(req: Request) {
         name: name.trim(),
         instanceName: slug,
         isDefault: count === 0,
-        dailyLimit: Number(dailyLimit) > 0 ? Number(dailyLimit) : 1200,
-        hourlyLimit: Number(hourlyLimit) > 0 ? Number(hourlyLimit) : 100,
+        dailyLimit: Number(dailyLimit) > 0 ? Number(dailyLimit) : 400,
+        hourlyLimit: Number(hourlyLimit) > 0 ? Number(hourlyLimit) : 40,
       },
     });
 

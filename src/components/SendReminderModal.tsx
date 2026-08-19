@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { ClienteVencido, ReminderTemplate } from "@/lib/amovidas-api";
+import { formatSendError } from "@/lib/send-error";
 
 interface Props {
   client: ClienteVencido;
@@ -122,7 +123,7 @@ export default function SendReminderModal({ client, onClose, onSent }: Props) {
       if (!res.ok || !data.ok) throw new Error(data.error || "Erro ao enviar");
       onSent();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao enviar");
+      setError(formatSendError(e instanceof Error ? e.message : "Erro ao enviar"));
     } finally {
       setSending(false);
     }

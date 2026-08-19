@@ -10,6 +10,7 @@ import { prisma } from "@/lib/prisma";
 import { evolutionSendContact } from "@/lib/evolution";
 import { auth } from "@/lib/auth";
 import { getInstanceForConversation } from "@/lib/evolution-credentials";
+import { formatSendError } from "@/lib/send-error";
 
 export async function POST(req: Request) {
   try {
@@ -47,7 +48,7 @@ export async function POST(req: Request) {
       console.error("[Send Contact] Evolution error:", error);
       const errorMessage = error instanceof Error ? error.message : "Erro desconhecido";
       return NextResponse.json(
-        { ok: false, error: `Erro ao enviar contato: ${errorMessage}` },
+        { ok: false, error: formatSendError(errorMessage) },
         { status: 500 }
       );
     }

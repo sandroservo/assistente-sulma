@@ -17,7 +17,9 @@ export function classifySendError(message: string): "invalid_number" | "blocked"
     t.includes("banned") ||
     t.includes("forbidden") ||
     t.includes("403") ||
-    t.includes("401")
+    t.includes("401") ||
+    t.includes("restricted") ||
+    t.includes("temporarily")
   ) {
     return "blocked";
   }
@@ -45,11 +47,27 @@ export function formatSendError(message: string): string {
   if (t.includes("número inválido") || t.includes("invalid number")) {
     return "Número inválido ou incompleto.";
   }
+  if (
+    t.includes("connection closed") ||
+    t.includes("session closed") ||
+    (t.includes("closed") && t.includes("connection"))
+  ) {
+    return "WhatsApp desconectou. Reconecte a instância e tente de novo.";
+  }
+  if (t.includes("restricted") || t.includes("temporarily") || t.includes("banned")) {
+    return "WhatsApp restringiu este número por hoje. Tente amanhã no horário comercial.";
+  }
   if (t.includes("blocked") || t.includes("banned") || t.includes("forbidden")) {
     return "Não foi possível enviar para este número.";
   }
-  if (t.includes("timeout") || t.includes("503") || t.includes("econn") || t.includes("disconnect")) {
-    return "Falha temporária de conexão.";
+  if (
+    t.includes("timeout") ||
+    t.includes("503") ||
+    t.includes("econn") ||
+    t.includes("disconnect") ||
+    t.includes("not connected")
+  ) {
+    return "Falha temporária de conexão. Reconecte o WhatsApp se o problema continuar.";
   }
   if (t.includes("401") || t.includes("403")) {
     return "Instância sem permissão para enviar. Reconecte o WhatsApp.";

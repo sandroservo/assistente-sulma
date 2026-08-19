@@ -26,6 +26,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatSendError } from "@/lib/send-error";
 import EmojiPicker from "@/components/chat/EmojiPicker";
 
 interface ChatComposerProps {
@@ -131,7 +132,7 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          onToast?.(data.error ?? "Erro ao editar mensagem", "error");
+          onToast?.(formatSendError(data.error || "Erro ao editar mensagem"), "error");
           return;
         }
         onToast?.("Mensagem editada", "success");
@@ -177,7 +178,7 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
         (window as any).__inboxRemoveOptimistic?.(tmpId);
         setText(outgoing);
         const data = await res.json().catch(() => ({}));
-        onToast?.(data.error ?? "Erro ao enviar mensagem", "error");
+        onToast?.(formatSendError(data.error || "Não foi possível enviar a mensagem."), "error");
         return;
       }
 
@@ -221,7 +222,7 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        onToast?.(data.error ?? "Erro ao enviar contato", "error");
+        onToast?.(formatSendError(data.error || "Não foi possível enviar o contato."), "error");
         return;
       }
       onToast?.("Contato enviado", "success");
@@ -320,7 +321,7 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        onToast?.(data.error ?? "Erro ao enviar áudio", "error");
+        onToast?.(formatSendError(data.error || "Não foi possível enviar o áudio."), "error");
         return;
       }
 
@@ -360,7 +361,7 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        onToast?.(data.error || "Erro ao enviar emoticon", "error");
+        onToast?.(formatSendError(data.error || "Não foi possível enviar o emoticon."), "error");
         return;
       }
       triggerRefetch();
@@ -407,7 +408,7 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        onToast?.(data.error || "Erro ao enviar card", "error");
+        onToast?.(formatSendError(data.error || "Não foi possível enviar o card."), "error");
         return;
       }
 
@@ -471,7 +472,7 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        onToast?.(data.error ?? "Erro ao enviar arquivo", "error");
+        onToast?.(formatSendError(data.error || "Não foi possível enviar o arquivo."), "error");
         return;
       }
 

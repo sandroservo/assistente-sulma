@@ -1,12 +1,10 @@
 /**
- * Anti-bloqueio Meta/WhatsApp para disparos em massa.
+ * Anti-bloqueio para disparo via Evolution (Baileys).
+ * A Evolution não limita envio: o WhatsApp é que restringe.
  *
- * Regras:
- * - Aquecimento progressivo por idade da instância
- * - Limite diário e por hora
- * - Pausa automática após erros seguidos
- * - Escolha ponderada (quem enviou menos / há mais tempo)
- * - Delays humanos com jitter e pausas longas
+ * Fluxo: horário comercial 8h–19h (Brasília) · aquecimento 7 dias ·
+ * teto por perfil · conferir número · delay "digitando" · intervalo irregular ·
+ * pausa até a manhã se houver restrição.
  */
 
 import { prisma } from "@/lib/prisma";
@@ -28,54 +26,142 @@ type ProfileCfg = {
 
 const PROFILES: Record<AntiBlockProfile, ProfileCfg> = {
   conservative: {
-    minDelay: 20_000,
-    maxDelay: 80_000,
-    extraEvery: 4,
-    extraChance: 0.55,
-    extraMin: 60_000,
-    extraMax: 180_000,
+    minDelay: 45_000,
+    maxDelay: 110_000,
+    extraEvery: 8,
+    extraChance: 0.7,
+    extraMin: 90_000,
+    extraMax: 240_000,
     dayMult: 0.55,
     hourMult: 0.55,
   },
   balanced: {
-    minDelay: 12_000,
-    maxDelay: 50_000,
-    extraEvery: 6,
-    extraChance: 0.4,
-    extraMin: 35_000,
-    extraMax: 90_000,
+    minDelay: 30_000,
+    maxDelay: 75_000,
+    extraEvery: 10,
+    extraChance: 0.45,
+    extraMin: 60_000,
+    extraMax: 150_000,
     dayMult: 0.85,
     hourMult: 0.85,
   },
   aggressive: {
-    minDelay: 8_000,
-    maxDelay: 28_000,
-    extraEvery: 10,
-    extraChance: 0.25,
-    extraMin: 20_000,
-    extraMax: 50_000,
+    minDelay: 20_000,
+    maxDelay: 50_000,
+    extraEvery: 12,
+    extraChance: 0.3,
+    extraMin: 40_000,
+    extraMax: 90_000,
     dayMult: 1,
     hourMult: 1,
   },
 };
 
+/** Teto após aquecimento — 100/hora em API não oficial é o que costuma gerar restrição até a noite. */
+const PROFILE_CEILING: Record<AntiBlockProfile, { hourly: number; daily: number }> = {
+  conservative: { hourly: 35, daily: 280 },
+  balanced: { hourly: 50, daily: 420 },
+  aggressive: { hourly: 70, daily: 600 },
+};
+
+const WARMUP_BY_DAY: Array<{ hourly: number; daily: number }> = [
+  { hourly: 10, daily: 50 },
+  { hourly: 15, daily: 80 },
+  { hourly: 20, daily: 120 },
+  { hourly: 28, daily: 170 },
+  { hourly: 35, daily: 230 },
+  { hourly: 42, daily: 300 },
+  { hourly: 50, daily: 380 },
+];
+
+const SEND_TZ = "America/Sao_Paulo";
+const SEND_HOUR_START = 8;
+const SEND_HOUR_END = 19;
+
+function warmupDayIndex(warmupStartedAt: Date | null): number {
+  if (!warmupStartedAt) return 1;
+  return Math.max(1, Math.floor((Date.now() - warmupStartedAt.getTime()) / 86_400_000) + 1);
+}
+
 export function warmupLimits(
   warmupStartedAt: Date | null,
   dailyLimit: number,
   hourlyLimit: number,
-  _profile: AntiBlockProfile
+  profile: AntiBlockProfile
 ) {
-  const days = warmupStartedAt
-    ? Math.max(
-        1,
-        Math.floor((Date.now() - warmupStartedAt.getTime()) / 86_400_000) + 1
-      )
-    : 1;
+  const days = warmupDayIndex(warmupStartedAt);
+  const ceiling = PROFILE_CEILING[profile];
+  if (days >= 8) {
+    return {
+      daily: Math.max(1, Math.min(dailyLimit, ceiling.daily)),
+      hourly: Math.max(1, Math.min(hourlyLimit, ceiling.hourly)),
+      days,
+    };
+  }
+  const ramp = WARMUP_BY_DAY[days - 1];
   return {
-    daily: Math.max(1, dailyLimit),
-    hourly: Math.max(1, hourlyLimit),
+    daily: Math.max(1, Math.min(dailyLimit, ramp.daily, ceiling.daily)),
+    hourly: Math.max(1, Math.min(hourlyLimit, ramp.hourly, ceiling.hourly)),
     days,
   };
+}
+
+function saoPauloClock(now = new Date()): { date: string; hour: number; minute: number } {
+  const stamp = now.toLocaleString("sv-SE", { timeZone: SEND_TZ });
+  const [date, time] = stamp.split(" ");
+  const [hour, minute] = time.split(":").map(Number);
+  return { date, hour, minute };
+}
+
+function saoPauloEightAmUtc(dateYmd: string): number {
+  return Date.parse(`${dateYmd}T08:00:00-03:00`);
+}
+
+function nextCalendarDate(ymd: string): string {
+  const d = new Date(`${ymd}T12:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/** 0 se está no horário comercial (8h–19h Brasília). Senão, ms até as 8h. */
+export function msUntilCampaignWindow(now = new Date()): number {
+  const { date, hour } = saoPauloClock(now);
+  if (hour >= SEND_HOUR_START && hour < SEND_HOUR_END) return 0;
+  const targetDate = hour >= SEND_HOUR_END ? nextCalendarDate(date) : date;
+  return Math.max(15_000, saoPauloEightAmUtc(targetDate) - now.getTime());
+}
+
+/** Próximas 8h (pula o restante de hoje) — usado após restrição/ban. */
+export function msUntilNextMorningSendWindow(now = new Date()): number {
+  const { date, hour } = saoPauloClock(now);
+  const targetDate = hour < SEND_HOUR_START ? date : nextCalendarDate(date);
+  return Math.max(60_000, saoPauloEightAmUtc(targetDate) - now.getTime());
+}
+
+export function formatBrasiliaTime(msFromNow: number): string {
+  return new Date(Date.now() + msFromNow).toLocaleTimeString("pt-BR", {
+    timeZone: SEND_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export function personalizeCampaignMessage(template: string, name: string | null): string {
+  const first = (name || "").trim().split(/\s+/)[0] || "";
+  let text = String(template || "")
+    .replace(/\{\{\s*nome\s*\}\}/gi, first)
+    .replace(/\{\{\s*name\s*\}\}/gi, first);
+  text = text.replace(/\s+,/g, ",").replace(/ ,/g, ",");
+  if (!first) {
+    text = text.replace(/olá,\s*/i, "Olá, ").replace(/\s{2,}/g, " ");
+  }
+  return text.trim();
+}
+
+export function composingDelayMs(text: string): number {
+  const chars = String(text || "").length;
+  const ms = 2000 + chars * 40 + Math.random() * 900;
+  return Math.round(Math.min(8_000, Math.max(2_000, ms)));
 }
 
 export function resetCountersIfNeeded<T extends Instance>(inst: T): T {
@@ -129,6 +215,10 @@ export function poolBlockReason(
   instances: Instance[],
   profile: AntiBlockProfile
 ): string | null {
+  const quiet = msUntilCampaignWindow();
+  if (quiet > 0) {
+    return `Horário de proteção: disparos só das 8h às 19h (Brasília). Continua às ${formatBrasiliaTime(quiet)}.`;
+  }
   if (!instances.length) return "Nenhuma instância conectada.";
   const reports = instances.map((inst) => {
     const fresh = resetCountersIfNeeded(inst);
@@ -144,7 +234,7 @@ export function poolBlockReason(
     case "limite diário":
       return `Limite diário de proteção (${fresh.sentToday}/${health.daily}). Continua automaticamente amanhã.`;
     case "em pausa preventiva":
-      return "Instância em pausa preventiva após erros. Retome em alguns minutos.";
+      return "Instância em pausa preventiva após restrição. Continua sozinho no horário comercial.";
     case "muitos erros seguidos":
       return "Muitos erros seguidos na instância. Verifique o WhatsApp e retome.";
     case "desconectada":
@@ -157,7 +247,16 @@ export function poolBlockReason(
 export function poolBlockInfo(
   instances: Instance[],
   profile: AntiBlockProfile
-): { kind: "hourly" | "daily" | "hard"; reason: string; waitMs: number } | null {
+): { kind: "hourly" | "daily" | "quiet" | "cooldown" | "hard"; reason: string; waitMs: number } | null {
+  const quiet = msUntilCampaignWindow();
+  if (quiet > 0) {
+    return {
+      kind: "quiet",
+      reason: `Horário de proteção: disparos só das 8h às 19h (Brasília). Continua às ${formatBrasiliaTime(quiet)}.`,
+      waitMs: quiet,
+    };
+  }
+
   const reason = poolBlockReason(instances, profile);
   if (!reason) return null;
   if (reason.includes("Limite horário")) {
@@ -165,6 +264,14 @@ export function poolBlockInfo(
   }
   if (reason.includes("Limite diário")) {
     return { kind: "daily", reason, waitMs: msUntilNextUtcDay() };
+  }
+  if (reason.includes("pausa preventiva")) {
+    const until = instances.reduce((max, inst) => {
+      const t = inst.pausedUntil?.getTime() || 0;
+      return t > max ? t : max;
+    }, 0);
+    const waitMs = until > Date.now() ? until - Date.now() : msUntilNextMorningSendWindow();
+    return { kind: "cooldown", reason, waitMs: Math.max(15_000, waitMs) };
   }
   return { kind: "hard", reason, waitMs: 0 };
 }
@@ -216,10 +323,14 @@ export function computeDelay(
 
 /** Espalha ~hourlyLimit envios na hora, com jitter (não é rajada). */
 export function computePacedDelay(hourlyLimit: number): number {
-  const cap = Math.max(30, hourlyLimit);
+  const cap = Math.max(12, hourlyLimit);
   const base = Math.round(3_600_000 / cap);
-  const jitter = 0.7 + Math.random() * 0.6;
-  return Math.max(8_000, Math.round(base * jitter));
+  const jitter = 0.75 + Math.random() * 0.5;
+  return Math.max(20_000, Math.round(base * jitter));
+}
+
+export function computeCampaignDelay(index: number, profile: AntiBlockProfile, hourlyLimit: number): number {
+  return Math.max(computePacedDelay(hourlyLimit), computeDelay(index, profile));
 }
 
 export function msUntilNextUtcHour(): number {
@@ -275,11 +386,13 @@ export async function recordSendFailure(instanceId: string, error: string) {
 
   const errors = inst.consecutiveErrors + 1;
   let pausedUntil: Date | null = inst.pausedUntil;
-  if (kind === "blocked" || errors >= 3) {
-    const minutes = kind === "blocked" ? 180 : 30;
-    pausedUntil = new Date(Date.now() + minutes * 60_000);
+  const restartWarmup = kind === "blocked" || kind === "transient";
+  if (kind === "blocked") {
+    pausedUntil = new Date(Date.now() + msUntilNextMorningSendWindow());
+  } else if (errors >= 3) {
+    pausedUntil = new Date(Date.now() + msUntilNextMorningSendWindow());
   } else if (kind === "transient") {
-    pausedUntil = new Date(Date.now() + 10 * 60_000);
+    pausedUntil = new Date(Date.now() + 30 * 60_000);
   }
 
   await prisma.instance.update({
@@ -288,6 +401,7 @@ export async function recordSendFailure(instanceId: string, error: string) {
       consecutiveErrors: errors,
       lastError: formatSendError(error).slice(0, 200),
       pausedUntil,
+      ...(restartWarmup && kind === "blocked" ? { warmupStartedAt: new Date() } : {}),
     },
   });
   return kind;

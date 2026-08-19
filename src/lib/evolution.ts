@@ -10,6 +10,7 @@ type SendTextArgs = {
   text: string;
   instanceName?: string;
   instanceToken?: string;
+  delayMs?: number;
 };
 
 async function getEvolutionConfig(override?: { instanceName?: string; token?: string }) {
@@ -63,7 +64,7 @@ export async function evolutionSendPresence(
   }
 }
 
-export async function evolutionSendText({ number, text, instanceName, instanceToken }: SendTextArgs) {
+export async function evolutionSendText({ number, text, instanceName, instanceToken, delayMs }: SendTextArgs) {
   const { baseUrl, instance, token } = await getEvolutionConfig({
     instanceName,
     token: instanceToken,
@@ -78,17 +79,17 @@ export async function evolutionSendText({ number, text, instanceName, instanceTo
 
   console.log("[Evolution] Sending message to:", url);
 
+  const payload: Record<string, unknown> = { number, text };
+  if (delayMs && delayMs > 0) payload.delay = Math.round(delayMs);
+
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       apikey: token,
     },
-    body: JSON.stringify({
-      number,
-      text,
-    }),
-    signal: AbortSignal.timeout(30000), // 30 segundos de timeout
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(45000),
   });
 
   if (!res.ok) {
@@ -99,6 +100,67 @@ export async function evolutionSendText({ number, text, instanceName, instanceTo
 
   console.log("[Evolution] Message sent successfully");
   return res.json().catch(() => ({}));
+}
+
+/** Confere um número por vez. true/false; null se a Evolution não respondeu. */
+export async function evolutionNumberExists(
+  number: string,
+  override?: { instanceName?: string; token?: string }
+): Promise<boolean | null> {
+  const { baseUrl, instance, token } = await getEvolutionConfig(override);
+  if (!baseUrl || !instance || !token) return null;
+  try {
+    const url = `${evolutionApiRoot(baseUrl)}/chat/whatsappNumbers/${instance}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: token },
+      body: JSON.stringify({ numbers: [String(number).replace(/\D/g, "")] }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const raw = await res.text().catch(() => "");
+    const parsed = parseWhatsappExistsPayload(raw);
+    if (parsed !== null) return parsed;
+    if (!res.ok) {
+      console.warn("[Evolution] check number HTTP", res.status, raw.slice(0, 300));
+      return null;
+    }
+    return null;
+  } catch (error) {
+    console.warn("[Evolution] check number:", error);
+    return null;
+  }
+}
+
+function parseWhatsappExistsPayload(raw: string): boolean | null {
+  if (!raw) return null;
+  let data: unknown = raw;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    const lower = raw.toLowerCase();
+    if (lower.includes('"exists":false') || lower.includes('"exists": false')) return false;
+    if (lower.includes('"exists":true') || lower.includes('"exists": true')) return true;
+    return null;
+  }
+
+  const rows: unknown[] = [];
+  if (Array.isArray(data)) rows.push(...data);
+  else if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    if (typeof obj.exists === "boolean") rows.push(obj);
+    if (Array.isArray(obj.message)) rows.push(...obj.message);
+    if (obj.response && typeof obj.response === "object") {
+      const inner = obj.response as Record<string, unknown>;
+      if (Array.isArray(inner.message)) rows.push(...inner.message);
+    }
+  }
+
+  for (const row of rows) {
+    if (row && typeof row === "object" && typeof (row as { exists?: unknown }).exists === "boolean") {
+      return (row as { exists: boolean }).exists;
+    }
+  }
+  return null;
 }
 
 /**
@@ -165,6 +227,7 @@ export async function evolutionSendMedia({
   fileName,
   instanceName,
   instanceToken,
+  delayMs,
 }: {
   number: string;
   mediatype: "image" | "document" | "video";
@@ -174,6 +237,7 @@ export async function evolutionSendMedia({
   fileName?: string;
   instanceName?: string;
   instanceToken?: string;
+  delayMs?: number;
 }) {
   const { baseUrl, instance, token } = await getEvolutionConfig({
     instanceName,
@@ -196,6 +260,7 @@ export async function evolutionSendMedia({
   if (mimetype) body.mimetype = mimetype;
   if (caption) body.caption = caption;
   if (fileName) body.fileName = fileName;
+  if (delayMs && delayMs > 0) body.delay = Math.round(delayMs);
 
   const res = await fetch(url, {
     method: "POST",

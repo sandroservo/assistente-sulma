@@ -5,9 +5,10 @@
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { evolutionSendText, evolutionSendTextWithQuote } from "@/lib/evolution";
+import { evolutionSendText, evolutionSendTextWithQuote, evolutionNumberExists } from "@/lib/evolution";
 import { auth } from "@/lib/auth";
 import { getInstanceForConversation } from "@/lib/evolution-credentials";
+import { formatSendError } from "@/lib/send-error";
 
 export async function POST(req: Request) {
   try {
@@ -57,6 +58,17 @@ export async function POST(req: Request) {
 
     console.log("[Send Message] Sending to:", convo.lead.phone, "via", inst?.instanceName);
 
+    const hasWhatsApp = await evolutionNumberExists(convo.lead.phone, {
+      instanceName: inst?.instanceName,
+      token: inst?.token || undefined,
+    });
+    if (hasWhatsApp === false) {
+      return NextResponse.json(
+        { ok: false, error: "Este número não tem WhatsApp." },
+        { status: 400 }
+      );
+    }
+
     try {
       if (quotedProviderId) {
         await evolutionSendTextWithQuote({
@@ -80,7 +92,7 @@ export async function POST(req: Request) {
       console.error("[Send Message] Evolution API error:", evolutionError);
       const errorMessage = evolutionError instanceof Error ? evolutionError.message : "Erro desconhecido";
       return NextResponse.json(
-        { ok: false, error: `Erro ao enviar mensagem: ${errorMessage}` },
+        { ok: false, error: formatSendError(errorMessage) },
         { status: 500 }
       );
     }

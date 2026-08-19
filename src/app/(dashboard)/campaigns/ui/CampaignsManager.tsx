@@ -81,7 +81,7 @@ export function CampaignsManager({
 
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
-  const [profile, setProfile] = useState("balanced");
+  const [profile, setProfile] = useState("conservative");
   const [image, setImage] = useState<{ base64: string; mime: string } | null>(null);
 
   async function reload() {
@@ -195,8 +195,11 @@ export function CampaignsManager({
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             rows={4}
-            placeholder="Texto que será enviado..."
+            placeholder="Olá {{nome}}, tudo bem? ..."
           />
+          <p className="text-xs text-muted-foreground">
+            Use {"{{nome}}"} para o primeiro nome. Mensagem idêntica para muita gente aumenta o risco de bloqueio.
+          </p>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
@@ -208,10 +211,13 @@ export function CampaignsManager({
               onChange={(e) => setProfile(e.target.value)}
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
-              <option value="conservative">Conservador</option>
-              <option value="balanced">Equilibrado</option>
-              <option value="aggressive">Agressivo</option>
+              <option value="conservative">Conservador — recomendado (~10 a 35/hora)</option>
+              <option value="balanced">Equilibrado (~15 a 50/hora)</option>
+              <option value="aggressive">Agressivo — maior risco de bloqueio</option>
             </select>
+            <p className="text-xs text-muted-foreground">
+              Disparos só das 8h às 19h (Brasília), com pausa e “digitando…” entre cada envio.
+            </p>
           </div>
           <div className="space-y-1">
             <Label htmlFor="c-img">Imagem (opcional)</Label>
@@ -298,7 +304,9 @@ export function CampaignsManager({
                         ) : f.status === "pending" || f.status === "sending" ? (
                           <span className="inline-flex items-center gap-1 text-amber-600">na fila</span>
                         ) : f.status === "skipped" ? (
-                          <span className="inline-flex items-center gap-1 text-gray-500">ignorado</span>
+                          <span className="inline-flex items-center gap-1 text-gray-500">
+                            {f.errorMsg || "ignorado"}
+                          </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-red-600">
                             <XCircle className="h-3 w-3" /> falhou

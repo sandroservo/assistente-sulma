@@ -11,6 +11,7 @@ import { evolutionSendMedia } from "@/lib/evolution";
 import { auth } from "@/lib/auth";
 import { saveMedia } from "@/lib/media-storage";
 import { getInstanceForConversation } from "@/lib/evolution-credentials";
+import { formatSendError } from "@/lib/send-error";
 
 export async function POST(req: Request) {
   try {
@@ -62,7 +63,7 @@ export async function POST(req: Request) {
           ? evolutionError.message
           : "Erro desconhecido";
       return NextResponse.json(
-        { ok: false, error: `Erro ao enviar mídia: ${errorMessage}` },
+        { ok: false, error: formatSendError(errorMessage) },
         { status: 500 }
       );
     }

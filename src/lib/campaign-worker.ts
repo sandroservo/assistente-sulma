@@ -4,15 +4,20 @@
  */
 
 import { prisma } from "@/lib/prisma";
-import { evolutionSendText, evolutionSendMedia } from "@/lib/evolution";
+import { evolutionSendText, evolutionSendMedia, evolutionNumberExists } from "@/lib/evolution";
 import {
   pickRandomInstance,
   poolBlockInfo,
-  computePacedDelay,
+  computeCampaignDelay,
   recordSendSuccess,
   recordSendFailure,
   classifySendError,
   formatSendError,
+  instanceHealth,
+  personalizeCampaignMessage,
+  composingDelayMs,
+  msUntilCampaignWindow,
+  formatBrasiliaTime,
   type AntiBlockProfile,
 } from "@/lib/anti-block";
 import { saveMedia } from "@/lib/media-storage";
@@ -29,9 +34,9 @@ const MAX_CONSECUTIVE_FAILURES = 5;
 const STALE_CLAIM_MS = 3 * 60 * 1000;
 
 type JobResult =
-  | { kind: "ok"; hourlyLimit: number }
+  | { kind: "ok"; delayMs: number }
   | { kind: "paused" }
-  | { kind: "wait"; waitMs: number };
+  | { kind: "wait"; waitMs: number; reason: string };
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -62,19 +67,28 @@ export async function processCampaignQueue() {
     await reclaimStaleJobs();
     await resumeRateLimitedRuns();
     while (true) {
+      const quietMs = msUntilCampaignWindow();
+      if (quietMs > 0) {
+        const running = await prisma.campaignRun.findFirst({
+          where: { status: "RUNNING" },
+          select: { id: true },
+        });
+        if (!running) break;
+        const when = formatBrasiliaTime(quietMs);
+        const waitReason = `Horário de proteção: disparos só das 8h às 19h (Brasília). Continua às ${when}.`;
+        await markRunningWaits(quietMs, waitReason);
+        await sleep(Math.min(quietMs, 10 * 60_000));
+        continue;
+      }
+
       const job = await claimNextJob();
       if (!job) break;
 
       const outcome = await processJob(job);
       if (outcome.kind === "paused") continue;
       if (outcome.kind === "wait") {
-        await sleep(outcome.waitMs);
-        await prisma.campaignRun
-          .update({
-            where: { id: job.runId },
-            data: { waitUntil: null, waitReason: null },
-          })
-          .catch(() => undefined);
+        await markRunWait(job.runId, outcome.waitMs, outcome.reason);
+        await sleep(Math.min(outcome.waitMs, 10 * 60_000));
         continue;
       }
 
@@ -84,7 +98,7 @@ export async function processCampaignQueue() {
         select: { id: true },
       });
       if (stillRunning) {
-        await sleep(computePacedDelay(outcome.hourlyLimit));
+        await sleep(outcome.delayMs);
       }
     }
   } finally {
@@ -163,7 +177,20 @@ async function processJob(job: ClaimedJob): Promise<JobResult> {
       where: { id: job.runId },
       data: { skipped: { increment: 1 }, consecutiveFailures: 0 },
     });
-    return { kind: "ok", hourlyLimit: 100 };
+    return { kind: "ok", delayMs: 8_000 };
+  }
+
+  const quietNow = msUntilCampaignWindow();
+  if (quietNow > 0) {
+    await prisma.campaignContact.update({
+      where: { id: job.id },
+      data: { status: "pending", claimedAt: null },
+    });
+    return {
+      kind: "wait",
+      waitMs: quietNow,
+      reason: `Horário de proteção: disparos só das 8h às 19h (Brasília). Continua às ${formatBrasiliaTime(quietNow)}.`,
+    };
   }
 
   const pool = await prisma.instance.findMany({
@@ -176,24 +203,20 @@ async function processJob(job: ClaimedJob): Promise<JobResult> {
       data: { status: "pending", claimedAt: null },
     });
     const info = poolBlockInfo(pool, profile);
-    if (info && (info.kind === "hourly" || info.kind === "daily")) {
+    if (info && (info.kind === "hourly" || info.kind === "daily" || info.kind === "quiet" || info.kind === "cooldown")) {
       const until = new Date(Date.now() + info.waitMs);
-      const when = until.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+      const when = until.toLocaleTimeString("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
       const waitReason = `${info.reason} Continua às ${when}.`;
       console.log("[CampaignWorker] aguardando janela", {
         runId: job.runId,
         waitMs: info.waitMs,
         waitReason,
       });
-      await prisma.campaignRun.update({
-        where: { id: job.runId },
-        data: { waitUntil: until, waitReason, status: "RUNNING" },
-      });
-      await prisma.campaign.update({
-        where: { id: campaign.id },
-        data: { status: "RUNNING" },
-      });
-      return { kind: "wait", waitMs: info.waitMs };
+      return { kind: "wait", waitMs: info.waitMs, reason: waitReason };
     }
     const reason = info?.reason || "Instância indisponível no momento.";
     console.warn("[CampaignWorker] pausando disparo:", job.runId, reason);
@@ -201,14 +224,48 @@ async function processJob(job: ClaimedJob): Promise<JobResult> {
     return { kind: "paused" };
   }
 
+  const exists = await evolutionNumberExists(job.phone, {
+    instanceName: picked.instanceName,
+    token: picked.token || undefined,
+  });
+  if (exists === false) {
+    console.log("[CampaignWorker] sem WhatsApp, descartado", { runId: job.runId, phone: job.phone });
+    await prisma.campaignContact.update({
+      where: { id: job.id },
+      data: {
+        status: "skipped",
+        errorKind: "invalid_number",
+        errorMsg: "Sem WhatsApp — descartado.",
+      },
+    });
+    await prisma.campaignRun.update({
+      where: { id: job.runId },
+      data: { skipped: { increment: 1 } },
+    });
+    return { kind: "ok", delayMs: 5_000 };
+  }
+  if (exists !== true) {
+    console.warn("[CampaignWorker] WhatsApp não confirmado, não envia", { runId: job.runId, phone: job.phone });
+    await prisma.campaignContact.update({
+      where: { id: job.id },
+      data: { status: "pending", claimedAt: null },
+    });
+    return { kind: "ok", delayMs: 15_000 };
+  }
+
   let inboxId: string | null = null;
+  const health = instanceHealth(picked, profile);
+  const text = personalizeCampaignMessage(campaign.message, job.name);
+  const typing = composingDelayMs(text);
+  const delayMs = computeCampaignDelay(job.run.sent + job.run.failed, profile, health.hourly);
+
   try {
     const mediaUrl = await mediaUrlForRun(job.run);
     const inbox = await prepareMassOutbound({
       organizationId: campaign.organizationId,
       phone: job.phone,
       name: job.name,
-      body: campaign.message,
+      body: text,
       mediaUrl,
       type: mediaUrl ? "image" : "text",
       source: "campaign",
@@ -223,16 +280,18 @@ async function processJob(job: ClaimedJob): Promise<JobResult> {
         mediatype: "image",
         media: campaign.mediaBase64,
         mimetype: campaign.mediaMimeType || "image/jpeg",
-        caption: campaign.message,
+        caption: text,
         instanceName: picked.instanceName,
         instanceToken: picked.token || undefined,
+        delayMs: typing,
       });
     } else {
       result = await evolutionSendText({
         number: job.phone,
-        text: campaign.message,
+        text,
         instanceName: picked.instanceName,
         instanceToken: picked.token || undefined,
+        delayMs: typing,
       });
     }
 
@@ -247,37 +306,57 @@ async function processJob(job: ClaimedJob): Promise<JobResult> {
       where: { id: job.runId },
       data: { sent: { increment: 1 }, consecutiveFailures: 0 },
     });
-    console.log("[CampaignWorker] enviado", { runId: job.runId, phone: job.phone });
-    return { kind: "ok", hourlyLimit: picked.hourlyLimit || 100 };
+    console.log("[CampaignWorker] enviado", { runId: job.runId, phone: job.phone, delayMs, typing });
+    return { kind: "ok", delayMs };
   } catch (error) {
     if (inboxId) await revertMassOutbound(inboxId);
     const errMsg = error instanceof Error ? error.message : "Erro desconhecido";
     const kind = classifySendError(errMsg);
     console.warn("[CampaignWorker] falha", { runId: job.runId, phone: job.phone, kind, errMsg });
+    if (kind === "invalid_number") {
+      await prisma.campaignContact.update({
+        where: { id: job.id },
+        data: {
+          status: "skipped",
+          errorKind: "invalid_number",
+          errorMsg: "Sem WhatsApp — descartado.",
+        },
+      });
+      await prisma.campaignRun.update({
+        where: { id: job.runId },
+        data: { skipped: { increment: 1 } },
+      });
+      return { kind: "ok", delayMs: 5_000 };
+    }
+
     await recordSendFailure(picked.id, errMsg);
     await prisma.campaignContact.update({
       where: { id: job.id },
       data: { status: "failed", errorKind: kind, errorMsg: formatSendError(errMsg) },
     });
 
-    const tripCircuit = kind !== "invalid_number";
+    const stopNow =
+      kind === "blocked" ||
+      /connection closed|restricted|banned|forbidden/i.test(errMsg);
     const updated = await prisma.campaignRun.update({
       where: { id: job.runId },
       data: {
         failed: { increment: 1 },
-        ...(tripCircuit ? { consecutiveFailures: { increment: 1 } } : {}),
+        consecutiveFailures: { increment: 1 },
       },
     });
 
-    if (tripCircuit && updated.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+    if (stopNow || updated.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       await pauseRun(
         job.runId,
         campaign.id,
-        `Pausa automática: ${updated.consecutiveFailures} falhas seguidas. Verifique a instância e a lista.`
+        stopNow
+          ? "WhatsApp restringiu o número. Pare o disparo, reconecte e só retome amanhã das 8h às 19h."
+          : `Pausa automática: ${updated.consecutiveFailures} falhas seguidas. Verifique a instância e a lista.`
       );
       return { kind: "paused" };
     }
-    return { kind: "ok", hourlyLimit: picked.hourlyLimit || 100 };
+    return { kind: "ok", delayMs };
   }
 }
 
@@ -293,6 +372,22 @@ async function mediaUrlForRun(run: CampaignRun & { campaign: Campaign }): Promis
   }
   mediaByRun.set(run.id, url);
   return url;
+}
+
+async function markRunWait(runId: string, waitMs: number, reason: string) {
+  const until = new Date(Date.now() + waitMs);
+  await prisma.campaignRun.update({
+    where: { id: runId },
+    data: { waitUntil: until, waitReason: reason, status: "RUNNING" },
+  });
+}
+
+async function markRunningWaits(waitMs: number, reason: string) {
+  const until = new Date(Date.now() + waitMs);
+  await prisma.campaignRun.updateMany({
+    where: { status: "RUNNING" },
+    data: { waitUntil: until, waitReason: reason },
+  });
 }
 
 async function pauseRun(runId: string, campaignId: string, reason: string) {
