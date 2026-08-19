@@ -4,6 +4,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { startCampaignWorker } from "@/lib/campaign-worker";
 
 export const dynamic = "force-dynamic";
 
@@ -35,13 +36,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
     },
   });
   if (!run) return NextResponse.json({ error: "Não encontrado" }, { status: 404 });
+  if (run.status === "RUNNING") startCampaignWorker();
 
   const pendingFirst = [...run.contacts].sort((a, b) => {
     const rank = (s: string) => {
       if (s === "sent" || s === "delivered" || s === "read") return 0;
       if (s === "sending") return 1;
       if (s === "pending") return 2;
-      return 3;
+      if (s === "skipped") return 3;
+      return 4;
     };
     const r = rank(a.status) - rank(b.status);
     if (r !== 0) return r;
@@ -50,7 +53,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
     return bt - at;
   });
 
-  const processed = run.sent + run.failed;
+  const processed = run.sent + run.failed + run.skipped;
   const remaining = Math.max(0, run.total - processed);
   let etaSeconds: number | null = null;
   if (processed > 0 && remaining > 0) {
@@ -66,6 +69,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
       total: run.total,
       sent: run.sent,
       failed: run.failed,
+      skipped: run.skipped,
+      consecutiveFailures: run.consecutiveFailures,
+      pauseReason: run.pauseReason,
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
       campaignId: run.campaign.id,

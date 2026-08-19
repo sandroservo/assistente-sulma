@@ -1,11 +1,12 @@
 /**
- * Campanhas não disparam mais automaticamente.
- * O envio é feito em Contatos → Disparo em Massa.
+ * Continua disparos pendentes (reinício do processo / cron).
  */
 
 import { NextResponse } from "next/server";
+import { startCampaignWorker } from "@/lib/campaign-worker";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function GET(req: Request) {
   const key = new URL(req.url).searchParams.get("key");
@@ -13,9 +14,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  return NextResponse.json({
-    ok: true,
-    processed: 0,
-    message: "Campanhas não disparam automaticamente. Use Contatos → Disparo em Massa.",
-  });
+  startCampaignWorker();
+  return NextResponse.json({ ok: true, message: "Worker de disparo iniciado." });
 }

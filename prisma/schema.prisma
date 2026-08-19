@@ -131,6 +131,7 @@ model ExcludedContact {
   organizationId String
   phone          String   // número normalizado (apenas dígitos)
   name           String?  // rótulo opcional, ex.: "João - Comercial"
+  reason         String   @default("manual") // manual | staff | opt_out
   createdAt      DateTime @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -404,10 +405,11 @@ model InfoCard {
 // ==========================================
 
 enum CampaignStatus {
-  DRAFT       // rascunho, não agendada
-  SCHEDULED   // aguardando execução (scheduledAt)
+  DRAFT       // modelo pronto / rascunho
+  SCHEDULED   // legado
   RUNNING     // executando agora
-  DONE        // concluída (sem recorrência)
+  PAUSED      // circuit breaker / pausa automática
+  DONE        // concluída
   CANCELLED
 }
 
@@ -444,14 +446,17 @@ model Campaign {
 
 // Cada execução de uma campanha (recorrente => vários runs, cada um com seu funil)
 model CampaignRun {
-  id         String         @id @default(cuid())
-  campaignId String
-  status     CampaignStatus @default(RUNNING) // RUNNING | DONE | CANCELLED
-  total      Int            @default(0)
-  sent       Int            @default(0)
-  failed     Int            @default(0)
-  startedAt  DateTime       @default(now())
-  finishedAt DateTime?
+  id                   String         @id @default(cuid())
+  campaignId           String
+  status               CampaignStatus @default(RUNNING) // RUNNING | PAUSED | DONE | CANCELLED
+  total                Int            @default(0)
+  sent                 Int            @default(0)
+  failed               Int            @default(0)
+  skipped              Int            @default(0)
+  consecutiveFailures  Int            @default(0)
+  pauseReason          String?
+  startedAt            DateTime       @default(now())
+  finishedAt           DateTime?
 
   campaign Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   contacts CampaignContact[]
@@ -464,15 +469,17 @@ model CampaignContact {
   runId      String
   phone      String
   name       String?
-  status     String    @default("pending") // pending | sent | delivered | read | failed
-  errorKind  String?   // invalid_number | blocked | transient | unknown
+  status     String    @default("pending") // pending | sending | sent | delivered | read | failed | skipped
+  errorKind  String?   // invalid_number | blocked | transient | unknown | opt_out
   errorMsg   String?   @db.Text
   providerId String?   // id da mensagem na Evolution (p/ casar entregue/lido via webhook)
+  claimedAt  DateTime?
   sentAt     DateTime?
 
   run CampaignRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@index([runId])
+  @@index([status])
   @@index([providerId])
 }
 

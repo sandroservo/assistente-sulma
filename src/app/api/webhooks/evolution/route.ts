@@ -18,6 +18,7 @@ import {
   parseIncomingMessage,
   isAckOnlyEvent,
 } from "@/lib/evolution-webhook";
+import { isOptOutText, skipPendingCampaignsForPhone, suppressPhone } from "@/lib/suppression";
 
 export async function GET() {
   return NextResponse.json({ ok: true, service: "evolution-webhook" });
@@ -404,6 +405,17 @@ async function ingestWhatsAppMessage(
 
     if (!text?.trim()) {
       return { ok: true, action: "no_text" };
+    }
+
+    if (isOptOutText(text)) {
+      await suppressPhone({
+        organizationId: lead.organizationId,
+        phone,
+        name: lead.name || lead.pushName || null,
+        reason: "opt_out",
+      });
+      await skipPendingCampaignsForPhone(lead.organizationId, phone);
+      return { ok: true, action: "opt_out" };
     }
 
     // Se lead já está com humano, não responde automaticamente

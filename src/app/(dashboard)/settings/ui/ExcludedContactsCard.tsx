@@ -96,7 +96,7 @@ export function ExcludedContactsCard() {
           Lista de exceção
         </CardTitle>
         <CardDescription>
-          Números para a Sulma <strong>não</strong> responder (ex.: pessoas da empresa, comerciais). Quem estiver na lista não receberá resposta automática da Sulma.
+          Números que a Sulma não responde e que também não entram em disparo em massa. Quem pedir PARE ou SAIR no WhatsApp entra nesta lista automaticamente.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

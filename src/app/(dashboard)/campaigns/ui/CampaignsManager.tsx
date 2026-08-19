@@ -2,14 +2,23 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Loader2, Trash2, ChevronDown, Send, MessageSquare, CheckCircle2, XCircle, Radio } from "lucide-react";
+import { Loader2, Trash2, ChevronDown, Send, MessageSquare, CheckCircle2, XCircle, Radio, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 
-type RunSummary = { status: string; total: number; sent: number; failed: number; startedAt: string | Date };
+type RunSummary = {
+  id: string;
+  status: string;
+  total: number;
+  sent: number;
+  failed: number;
+  skipped?: number;
+  pauseReason?: string | null;
+  startedAt: string | Date;
+};
 type Campaign = {
   id: string;
   name: string;
@@ -34,6 +43,7 @@ const STATUS_LABEL: Record<string, string> = {
   DRAFT: "Pronta",
   SCHEDULED: "Pronta",
   RUNNING: "Enviando",
+  PAUSED: "Pausada",
   DONE: "Pronta",
   CANCELLED: "Arquivada",
 };
@@ -41,6 +51,7 @@ const STATUS_COLOR: Record<string, string> = {
   DRAFT: "bg-gray-200 text-gray-700",
   SCHEDULED: "bg-gray-200 text-gray-700",
   RUNNING: "bg-amber-100 text-amber-700",
+  PAUSED: "bg-orange-100 text-orange-800",
   DONE: "bg-gray-200 text-gray-700",
   CANCELLED: "bg-red-100 text-red-700",
 };
@@ -118,6 +129,18 @@ export function CampaignsManager({
       setError("Erro ao criar campanha.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function resume(runId: string) {
+    setBusyId(runId);
+    try {
+      const res = await fetch(`/api/broadcast/${runId}/resume`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Não foi possível retomar."); return; }
+      await reload();
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -215,6 +238,12 @@ export function CampaignsManager({
                   <span className="text-xs text-muted-foreground">{PROFILE_LABEL[c.profile] || c.profile}</span>
                 </div>
                 <div className="flex gap-2">
+                  {(c.status === "PAUSED" || run?.status === "PAUSED") && run?.id && (
+                    <Button size="sm" variant="outline" disabled={busyId === run.id} onClick={() => resume(run.id)}>
+                      {busyId === run.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                      Retomar
+                    </Button>
+                  )}
                   <Button size="sm" variant="outline" asChild>
                     <Link href="/contacts">
                       <Radio className="h-4 w-4" />
@@ -234,6 +263,8 @@ export function CampaignsManager({
                   <span>Total: <b>{run.total}</b></span>
                   <span className="text-green-600">Enviados: <b>{run.sent}</b></span>
                   <span className="text-red-600">Erros: <b>{run.failed}</b></span>
+                  {(run.skipped ?? 0) > 0 && <span className="text-gray-600">Ignorados: <b>{run.skipped}</b></span>}
+                  {run.pauseReason && <span className="text-orange-700">{run.pauseReason}</span>}
                   <span className="text-muted-foreground">Último: {fmt(run.startedAt)}</span>
                   <button onClick={() => toggleRecipients(c.id)} className="flex items-center gap-1 text-blue-600">
                     Ver quem recebeu <ChevronDown className={`h-3 w-3 transition ${expanded === c.id ? "rotate-180" : ""}`} />
@@ -265,6 +296,8 @@ export function CampaignsManager({
                           </span>
                         ) : f.status === "pending" || f.status === "sending" ? (
                           <span className="inline-flex items-center gap-1 text-amber-600">na fila</span>
+                        ) : f.status === "skipped" ? (
+                          <span className="inline-flex items-center gap-1 text-gray-500">ignorado</span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-red-600">
                             <XCircle className="h-3 w-3" /> falhou

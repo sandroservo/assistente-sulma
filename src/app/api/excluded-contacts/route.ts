@@ -61,6 +61,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const reason = ["manual", "staff", "opt_out"].includes(body?.reason) ? body.reason : "manual";
+
     const existing = await prisma.excludedContact.findUnique({
       where: {
         organizationId_phone: {
@@ -81,6 +83,7 @@ export async function POST(request: NextRequest) {
         organizationId: session.user.organizationId,
         phone,
         name,
+        reason,
       },
     });
 

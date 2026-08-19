@@ -26,6 +26,8 @@ export type BroadcastRun = {
   total: number;
   sent: number;
   failed: number;
+  skipped?: number;
+  pauseReason?: string | null;
   campaignName: string;
   etaSeconds?: number | null;
   contacts: BroadcastRunContact[];
@@ -110,7 +112,8 @@ export function BroadcastDock({
   const [run, setRun] = useState<BroadcastRun | null>(null);
   const [open, setOpen] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<"all" | "sent" | "pending" | "failed">("all");
+  const [filter, setFilter] = useState<"all" | "sent" | "pending" | "failed" | "skipped">("all");
+  const [resuming, setResuming] = useState(false);
 
   useEffect(() => {
     let stop = false;
@@ -141,17 +144,30 @@ export function BroadcastDock({
   }, [runId]);
 
   const done = run?.status === "DONE" || run?.status === "CANCELLED";
-  const processed = (run?.sent ?? 0) + (run?.failed ?? 0);
+  const paused = run?.status === "PAUSED";
+  const processed = (run?.sent ?? 0) + (run?.failed ?? 0) + (run?.skipped ?? 0);
   const total = run?.total ?? 0;
   const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
   const sendingCount = run?.contacts.filter((c) => c.status === "sending").length ?? 0;
   const pendingCount = run?.contacts.filter((c) => c.status === "pending" || c.status === "sending").length ?? 0;
+
+  async function resume() {
+    setResuming(true);
+    try {
+      const res = await fetch(`/api/broadcast/${runId}/resume`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) setError(data.error || "Não foi possível retomar");
+    } finally {
+      setResuming(false);
+    }
+  }
 
   const visible = useMemo(() => {
     const list = run?.contacts ?? [];
     if (filter === "sent") return list.filter((c) => c.status === "sent" || c.status === "delivered" || c.status === "read");
     if (filter === "pending") return list.filter((c) => c.status === "pending" || c.status === "sending");
     if (filter === "failed") return list.filter((c) => c.status === "failed");
+    if (filter === "skipped") return list.filter((c) => c.status === "skipped");
     return list;
   }, [run?.contacts, filter]);
 
@@ -159,18 +175,21 @@ export function BroadcastDock({
     <div className="fixed bottom-4 right-4 z-40 w-[min(100%-2rem,420px)] shadow-2xl rounded-2xl overflow-hidden border border-gray-200 bg-white">
       <div className="w-full flex items-center gap-3 px-4 py-3 bg-[#001A5E] text-white">
         <button type="button" onClick={() => setOpen((v) => !v)} className="flex flex-1 items-center gap-3 min-w-0 text-left">
-          {done ? <CheckCircle2 className="w-4 h-4 text-[#FFD600] shrink-0" /> : <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
+          {done ? <CheckCircle2 className="w-4 h-4 text-[#FFD600] shrink-0" /> : paused ? <XCircle className="w-4 h-4 text-orange-300 shrink-0" /> : <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold truncate">{run?.campaignName || "Disparo"}</p>
             <p className="text-[11px] text-white/70">
               {done
                 ? "Concluído"
-                : sendingCount > 0
-                  ? `Enviando agora${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`
-                  : `Na fila${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`}
+                : paused
+                  ? "Pausado automaticamente"
+                  : sendingCount > 0
+                    ? `Enviando agora${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`
+                    : `Na fila${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`}
               {" · "}
               {run?.sent ?? 0} ok
-              {(run?.failed ?? 0) > 0 ? ` · ${run?.failed} falha` : ""} · {processed}/{total}
+              {(run?.failed ?? 0) > 0 ? ` · ${run?.failed} falha` : ""}
+              {(run?.skipped ?? 0) > 0 ? ` · ${run?.skipped} ignorado` : ""} · {processed}/{total}
             </p>
           </div>
         </button>
@@ -205,6 +224,7 @@ export function BroadcastDock({
                 ["sent", `Receberam (${run?.sent ?? 0})`],
                 ["pending", `Fila (${pendingCount})`],
                 ["failed", `Falhas (${run?.failed ?? 0})`],
+                ["skipped", `Ignorados (${run?.skipped ?? 0})`],
               ] as const
             ).map(([id, label]) => (
               <button
@@ -232,6 +252,7 @@ export function BroadcastDock({
                 {c.status === "failed" && <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />}
                 {c.status === "pending" && <Clock className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />}
                 {c.status === "sending" && <Loader2 className="w-3.5 h-3.5 text-[#001A5E] animate-spin shrink-0 mt-0.5" />}
+                {c.status === "skipped" && <XCircle className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />}
                 {(c.status === "delivered" || c.status === "read") && (
                   <Radio className="w-3.5 h-3.5 text-sky-500 shrink-0 mt-0.5" />
                 )}
@@ -244,13 +265,27 @@ export function BroadcastDock({
                     {c.status === "sent" && " · recebeu"}
                     {c.status === "sending" && " · enviando agora"}
                     {c.status === "pending" && " · na fila"}
+                    {c.status === "skipped" && (c.errorMsg ? ` · ${c.errorMsg}` : " · ignorado")}
                     {c.status === "failed" && c.errorMsg ? ` · ${c.errorMsg}` : ""}
                   </p>
                 </div>
               </div>
             ))}
           </div>
-          {!done && (
+          {paused && (
+            <div className="rounded-lg bg-orange-50 border border-orange-200 p-2 space-y-2">
+              <p className="text-xs text-orange-800">{run?.pauseReason || "Disparo pausado por falhas consecutivas."}</p>
+              <button
+                type="button"
+                onClick={resume}
+                disabled={resuming}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[#001A5E] text-white disabled:opacity-60"
+              >
+                {resuming ? "Retomando…" : "Retomar envio"}
+              </button>
+            </div>
+          )}
+          {!done && !paused && (
             <p className="text-[11px] text-gray-500">
               Pode fechar este painel, trocar de página ou continuar trabalhando. O envio não para.
             </p>

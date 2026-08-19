@@ -63,10 +63,7 @@ export async function POST(req: Request) {
     if (!campaign) return NextResponse.json({ error: "Campanha não encontrada" }, { status: 404 });
 
     const prepared = await prepareCampaignRun(campaignId, { contacts, skipSchedule: true });
-    executeCampaignRun(prepared.runId, {
-      skipSchedule: true,
-      previousStatus: prepared.previousStatus,
-    }).catch((err) => console.error("[Broadcast] executeCampaignRun:", err));
+    executeCampaignRun(prepared.runId);
 
     return NextResponse.json({
       ok: true,

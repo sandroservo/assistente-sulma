@@ -24,7 +24,7 @@ export async function GET() {
       runs: {
         orderBy: { startedAt: "desc" },
         take: 1,
-        select: { id: true, status: true, total: true, sent: true, failed: true, startedAt: true },
+        select: { id: true, status: true, total: true, sent: true, failed: true, skipped: true, pauseReason: true, startedAt: true },
       },
       _count: { select: { runs: true } },
     },

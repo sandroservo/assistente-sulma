@@ -19,7 +19,7 @@ export default async function CampaignsPage() {
       runs: {
         orderBy: { startedAt: "desc" },
         take: 1,
-        select: { status: true, total: true, sent: true, failed: true, startedAt: true },
+        select: { id: true, status: true, total: true, sent: true, failed: true, skipped: true, pauseReason: true, startedAt: true },
       },
     },
   });
