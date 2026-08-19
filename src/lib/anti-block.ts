@@ -62,37 +62,17 @@ export function warmupLimits(
   warmupStartedAt: Date | null,
   dailyLimit: number,
   hourlyLimit: number,
-  profile: AntiBlockProfile
+  _profile: AntiBlockProfile
 ) {
-  const cfg = PROFILES[profile];
   const days = warmupStartedAt
     ? Math.max(
         1,
         Math.floor((Date.now() - warmupStartedAt.getTime()) / 86_400_000) + 1
       )
     : 1;
-
-  let daily = dailyLimit;
-  let hourly = hourlyLimit;
-  if (days <= 2) {
-    daily = Math.min(30, dailyLimit);
-    hourly = Math.min(10, hourlyLimit);
-    return { daily, hourly, days };
-  }
-  if (days <= 7) {
-    daily = Math.min(60, dailyLimit);
-    hourly = Math.min(hourlyLimit, 15);
-    return { daily, hourly, days };
-  }
-  if (days <= 14) {
-    daily = Math.min(90, dailyLimit);
-    hourly = Math.min(hourlyLimit, 20);
-    return { daily, hourly, days };
-  }
-
   return {
-    daily: Math.max(1, Math.floor(dailyLimit * cfg.dayMult)),
-    hourly: Math.max(1, Math.floor(hourlyLimit * cfg.hourMult)),
+    daily: Math.max(1, dailyLimit),
+    hourly: Math.max(1, hourlyLimit),
     days,
   };
 }
@@ -159,9 +139,9 @@ export function poolBlockReason(
   const { fresh, health } = blocked[0];
   switch (health.reason) {
     case "limite horário":
-      return `Limite horário de proteção (${fresh.sentThisHour}/${health.hourly} nesta hora). Retome quando a hora virar.`;
+      return `Limite horário de proteção (${fresh.sentThisHour}/${health.hourly} nesta hora). Continua automaticamente na próxima hora.`;
     case "limite diário":
-      return `Limite diário de proteção (${fresh.sentToday}/${health.daily}). Retome amanhã.`;
+      return `Limite diário de proteção (${fresh.sentToday}/${health.daily}). Continua automaticamente amanhã.`;
     case "em pausa preventiva":
       return "Instância em pausa preventiva após erros. Retome em alguns minutos.";
     case "muitos erros seguidos":
@@ -171,6 +151,21 @@ export function poolBlockReason(
     default:
       return health.reason || "Instância indisponível no momento.";
   }
+}
+
+export function poolBlockInfo(
+  instances: Instance[],
+  profile: AntiBlockProfile
+): { kind: "hourly" | "daily" | "hard"; reason: string; waitMs: number } | null {
+  const reason = poolBlockReason(instances, profile);
+  if (!reason) return null;
+  if (reason.includes("Limite horário")) {
+    return { kind: "hourly", reason, waitMs: msUntilNextUtcHour() };
+  }
+  if (reason.includes("Limite diário")) {
+    return { kind: "daily", reason, waitMs: msUntilNextUtcDay() };
+  }
+  return { kind: "hard", reason, waitMs: 0 };
 }
 
 export function pickRandomInstance(
@@ -216,6 +211,30 @@ export function computeDelay(
       ? cfg.extraMin + Math.random() * (cfg.extraMax - cfg.extraMin)
       : 0;
   return Math.round(jitter + extra);
+}
+
+/** Espalha ~hourlyLimit envios na hora, com jitter (não é rajada). */
+export function computePacedDelay(hourlyLimit: number): number {
+  const cap = Math.max(30, hourlyLimit);
+  const base = Math.round(3_600_000 / cap);
+  const jitter = 0.7 + Math.random() * 0.6;
+  return Math.max(8_000, Math.round(base * jitter));
+}
+
+export function msUntilNextUtcHour(): number {
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCMilliseconds(0);
+  next.setUTCSeconds(0);
+  next.setUTCMinutes(0);
+  next.setUTCHours(now.getUTCHours() + 1);
+  return Math.max(5_000, next.getTime() - now.getTime() + 3_000);
+}
+
+export function msUntilNextUtcDay(): number {
+  const now = new Date();
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 3, 0));
+  return Math.max(5_000, next.getTime() - now.getTime());
 }
 
 export function classifySendError(message: string): "invalid_number" | "blocked" | "transient" | "unknown" {

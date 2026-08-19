@@ -96,8 +96,8 @@ export async function POST(req: Request) {
         name: name.trim(),
         instanceName: slug,
         isDefault: count === 0,
-        dailyLimit: Number(dailyLimit) > 0 ? Number(dailyLimit) : 80,
-        hourlyLimit: Number(hourlyLimit) > 0 ? Number(hourlyLimit) : 12,
+        dailyLimit: Number(dailyLimit) > 0 ? Number(dailyLimit) : 1200,
+        hourlyLimit: Number(hourlyLimit) > 0 ? Number(hourlyLimit) : 100,
       },
     });
 

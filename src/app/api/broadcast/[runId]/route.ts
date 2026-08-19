@@ -36,7 +36,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
     },
   });
   if (!run) return NextResponse.json({ error: "Não encontrado" }, { status: 404 });
-  if (run.status === "RUNNING") startCampaignWorker();
+  if (run.status === "RUNNING" || run.status === "PAUSED") startCampaignWorker();
 
   const pendingFirst = [...run.contacts].sort((a, b) => {
     const rank = (s: string) => {
@@ -72,6 +72,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
       skipped: run.skipped,
       consecutiveFailures: run.consecutiveFailures,
       pauseReason: run.pauseReason,
+      waitUntil: run.waitUntil,
+      waitReason: run.waitReason,
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
       campaignId: run.campaign.id,

@@ -88,8 +88,8 @@ model Instance {
   isDefault      Boolean        @default(false)
 
   // Anti-bloqueio Meta / WhatsApp
-  dailyLimit        Int       @default(80)
-  hourlyLimit       Int       @default(12)
+  dailyLimit        Int       @default(1200)
+  hourlyLimit       Int       @default(100)
   warmupStartedAt   DateTime?
   pausedUntil       DateTime?
   consecutiveErrors Int       @default(0)
@@ -455,6 +455,8 @@ model CampaignRun {
   skipped              Int            @default(0)
   consecutiveFailures  Int            @default(0)
   pauseReason          String?
+  waitUntil            DateTime?
+  waitReason           String?
   startedAt            DateTime       @default(now())
   finishedAt           DateTime?
 

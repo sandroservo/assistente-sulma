@@ -28,6 +28,8 @@ export type BroadcastRun = {
   failed: number;
   skipped?: number;
   pauseReason?: string | null;
+  waitUntil?: string | Date | null;
+  waitReason?: string | null;
   campaignName: string;
   etaSeconds?: number | null;
   contacts: BroadcastRunContact[];
@@ -145,6 +147,8 @@ export function BroadcastDock({
 
   const done = run?.status === "DONE" || run?.status === "CANCELLED";
   const paused = run?.status === "PAUSED";
+  const waitingUntil = run?.waitUntil ? new Date(run.waitUntil) : null;
+  const waiting = Boolean(waitingUntil && waitingUntil.getTime() > Date.now());
   const processed = (run?.sent ?? 0) + (run?.failed ?? 0) + (run?.skipped ?? 0);
   const total = run?.total ?? 0;
   const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
@@ -175,7 +179,7 @@ export function BroadcastDock({
     <div className="fixed bottom-4 right-4 z-40 w-[min(100%-2rem,420px)] shadow-2xl rounded-2xl overflow-hidden border border-gray-200 bg-white">
       <div className="w-full flex items-center gap-3 px-4 py-3 bg-[#001A5E] text-white">
         <button type="button" onClick={() => setOpen((v) => !v)} className="flex flex-1 items-center gap-3 min-w-0 text-left">
-          {done ? <CheckCircle2 className="w-4 h-4 text-[#FFD600] shrink-0" /> : paused ? <XCircle className="w-4 h-4 text-orange-300 shrink-0" /> : <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
+          {done ? <CheckCircle2 className="w-4 h-4 text-[#FFD600] shrink-0" /> : paused ? <XCircle className="w-4 h-4 text-orange-300 shrink-0" /> : waiting ? <Clock className="w-4 h-4 text-[#FFD600] shrink-0" /> : <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold truncate">{run?.campaignName || "Disparo"}</p>
             <p className="text-[11px] text-white/70">
@@ -183,9 +187,11 @@ export function BroadcastDock({
                 ? "Concluído"
                 : paused
                   ? "Pausado automaticamente"
-                  : sendingCount > 0
-                    ? `Enviando agora${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`
-                    : `Na fila${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`}
+                  : waiting
+                    ? `Aguardando a hora virar · continua ${waitingUntil?.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`
+                    : sendingCount > 0
+                      ? `Enviando agora${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`
+                      : `Na fila${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`}
               {" · "}
               {run?.sent ?? 0} ok
               {(run?.failed ?? 0) > 0 ? ` · ${run?.failed} falha` : ""}
@@ -272,6 +278,11 @@ export function BroadcastDock({
               </div>
             ))}
           </div>
+          {waiting && (
+            <div className="rounded-lg bg-[#EEF2FF] border border-[#9AADD4] p-2">
+              <p className="text-xs text-[#001A5E]">{run?.waitReason || "Aguardando a próxima hora para continuar de onde parou."}</p>
+            </div>
+          )}
           {paused && (
             <div className="rounded-lg bg-orange-50 border border-orange-200 p-2 space-y-2">
               <p className="text-xs text-orange-800">{run?.pauseReason || "Disparo pausado por falhas consecutivas."}</p>
@@ -285,7 +296,7 @@ export function BroadcastDock({
               </button>
             </div>
           )}
-          {!done && !paused && (
+          {!done && !paused && !waiting && (
             <p className="text-[11px] text-gray-500">
               Pode fechar este painel, trocar de página ou continuar trabalhando. O envio não para.
             </p>
