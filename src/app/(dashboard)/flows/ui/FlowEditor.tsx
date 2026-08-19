@@ -63,7 +63,9 @@ const nodeTypes = {
   start: () => <NodeBox kind="start" summary="Gatilho" target={false} />,
   texto: (p: NodeProps) => <NodeBox kind="texto" summary={String((p.data as { text?: string })?.text ?? "")} />,
   captura: (p: NodeProps) => <NodeBox kind="captura" summary={`→ ${String((p.data as { variable?: string })?.variable ?? "var")}`} />,
-  condicao: () => <NodeBox kind="condicao" summary="ramifica por palavra-chave" />,
+  condicao: (p: NodeProps) => (
+    <NodeBox kind="condicao" summary={String((p.data as { text?: string })?.text ?? "ramifica por palavra-chave")} />
+  ),
   transferir: (p: NodeProps) => <NodeBox kind="transferir" summary={String((p.data as { sector?: string })?.sector ?? "setor")} source={false} />,
 };
 
@@ -100,7 +102,11 @@ export function FlowEditor({ flow }: { flow: FlowRecord }) {
     setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)));
   }
   function updateEdgeKeyword(id: string, keyword: string) {
-    setEdges((eds) => eds.map((e) => (e.id === id ? { ...e, label: keyword, data: { ...e.data, keyword } } : e)));
+    setEdges((eds) =>
+      eds.map((e) =>
+        e.id === id ? { ...e, label: keyword.split("|")[0] || keyword, data: { ...e.data, keyword } } : e
+      )
+    );
   }
 
   const currentGraph = useMemo<FlowGraph>(
@@ -193,9 +199,16 @@ export function FlowEditor({ flow }: { flow: FlowRecord }) {
                 </>
               )}
               {node.type === "condicao" && (
-                <p className="text-xs text-muted-foreground">
-                  Ligue este nó a vários destinos. Clique em cada seta e defina a palavra-chave. A seta sem palavra-chave é o padrão.
-                </p>
+                <>
+                  <div className="space-y-1">
+                    <Label>Resumo no cartão</Label>
+                    <Input value={String(node.data?.text ?? "")} onChange={(e) => updateNodeData(node.id, { text: e.target.value })} placeholder="ex: roteia intenção" />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Ligue este nó a vários destinos. Clique em cada seta e defina a palavra-chave.
+                    Use <code>|</code> para várias (ex.: comercial|matrícula). A seta sem palavra-chave é o padrão.
+                  </p>
+                </>
               )}
               {node.type === "transferir" && (
                 <div className="space-y-1">
@@ -215,7 +228,11 @@ export function FlowEditor({ flow }: { flow: FlowRecord }) {
             <div className="space-y-1">
               <h3 className="font-semibold text-sm">Conexão</h3>
               <Label>Palavra-chave (condição)</Label>
-              <Input value={String(edge.label ?? "")} onChange={(e) => updateEdgeKeyword(edge.id, e.target.value)} placeholder="vazio = padrão" />
+              <Input
+                value={String((edge.data as { keyword?: string } | undefined)?.keyword ?? edge.label ?? "")}
+                onChange={(e) => updateEdgeKeyword(edge.id, e.target.value)}
+                placeholder="ex: comercial|matrícula — vazio = padrão"
+              />
               <Button size="sm" variant="outline" onClick={() => { setEdges((eds) => eds.filter((e) => e.id !== edge.id)); setSelEdge(null); }}>Excluir conexão</Button>
             </div>
           )}

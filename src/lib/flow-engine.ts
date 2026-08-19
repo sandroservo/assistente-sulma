@@ -65,8 +65,9 @@ function nextTarget(graph: FlowGraph, nodeId: string, input: string, isCondition
   if (isCondition) {
     const text = (input || "").toLowerCase();
     const match = outgoing.find((e) => {
-      const kw = (e.data?.keyword ?? e.label ?? "").toString().trim().toLowerCase();
-      return kw.length > 0 && text.includes(kw);
+      const raw = (e.data?.keyword ?? e.label ?? "").toString();
+      const kws = raw.split(/[|,]/).map((k) => k.trim().toLowerCase()).filter(Boolean);
+      return kws.some((kw) => text.includes(kw));
     });
     if (match) return match.target;
     // fallback: aresta sem keyword (default)
