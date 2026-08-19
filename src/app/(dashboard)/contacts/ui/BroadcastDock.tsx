@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, Clock, Loader2, Radio, X, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatSendError } from "@/lib/send-error";
 
 const STORAGE_KEY = "sulma-broadcast-run";
 const EVENT_NAME = "sulma-broadcast-run";
@@ -272,7 +273,7 @@ export function BroadcastDock({
                     {c.status === "sending" && " · enviando agora"}
                     {c.status === "pending" && " · na fila"}
                     {c.status === "skipped" && (c.errorMsg ? ` · ${c.errorMsg}` : " · ignorado")}
-                    {c.status === "failed" && c.errorMsg ? ` · ${c.errorMsg}` : ""}
+                    {c.status === "failed" && ` · ${formatSendError(c.errorMsg || "")}`}
                   </p>
                 </div>
               </div>

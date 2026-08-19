@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { formatSendError } from "@/lib/send-error";
 
 type RunSummary = {
   id: string;
@@ -286,7 +287,7 @@ export function CampaignsManager({
                           Contato: {f.contactName || f.name || "—"} · {f.phone}
                         </p>
                         {f.status === "failed" && (
-                          <p className="text-red-600">{f.errorKind || "erro"}: {f.errorMsg?.slice(0, 80)}</p>
+                          <p className="text-red-600">{formatSendError(f.errorMsg || "")}</p>
                         )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">

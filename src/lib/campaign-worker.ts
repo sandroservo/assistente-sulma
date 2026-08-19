@@ -12,6 +12,7 @@ import {
   recordSendSuccess,
   recordSendFailure,
   classifySendError,
+  formatSendError,
   type AntiBlockProfile,
 } from "@/lib/anti-block";
 import { saveMedia } from "@/lib/media-storage";
@@ -252,10 +253,11 @@ async function processJob(job: ClaimedJob): Promise<JobResult> {
     if (inboxId) await revertMassOutbound(inboxId);
     const errMsg = error instanceof Error ? error.message : "Erro desconhecido";
     const kind = classifySendError(errMsg);
+    console.warn("[CampaignWorker] falha", { runId: job.runId, phone: job.phone, kind, errMsg });
     await recordSendFailure(picked.id, errMsg);
     await prisma.campaignContact.update({
       where: { id: job.id },
-      data: { status: "failed", errorKind: kind, errorMsg: errMsg.slice(0, 500) },
+      data: { status: "failed", errorKind: kind, errorMsg: formatSendError(errMsg) },
     });
 
     const tripCircuit = kind !== "invalid_number";

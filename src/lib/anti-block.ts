@@ -11,6 +11,7 @@
 
 import { prisma } from "@/lib/prisma";
 import type { Instance } from "@prisma/client";
+import { classifySendError, formatSendError } from "@/lib/send-error";
 
 export type AntiBlockProfile = "conservative" | "balanced" | "aggressive";
 
@@ -237,36 +238,7 @@ export function msUntilNextUtcDay(): number {
   return Math.max(5_000, next.getTime() - now.getTime());
 }
 
-export function classifySendError(message: string): "invalid_number" | "blocked" | "transient" | "unknown" {
-  const t = message.toLowerCase();
-  if (
-    t.includes("exists") ||
-    t.includes("not a whatsapp") ||
-    t.includes("número inválido") ||
-    t.includes("invalid number")
-  ) {
-    return "invalid_number";
-  }
-  if (
-    t.includes("blocked") ||
-    t.includes("banned") ||
-    t.includes("forbidden") ||
-    t.includes("403") ||
-    t.includes("401")
-  ) {
-    return "blocked";
-  }
-  if (
-    t.includes("503") ||
-    t.includes("timeout") ||
-    t.includes("econn") ||
-    t.includes("closed") ||
-    t.includes("disconnect")
-  ) {
-    return "transient";
-  }
-  return "unknown";
-}
+export { classifySendError, formatSendError } from "@/lib/send-error";
 
 export async function recordSendSuccess(instanceId: string) {
   const inst = await prisma.instance.findUnique({ where: { id: instanceId } });
@@ -296,7 +268,7 @@ export async function recordSendFailure(instanceId: string, error: string) {
   if (kind === "invalid_number") {
     await prisma.instance.update({
       where: { id: instanceId },
-      data: { lastError: error.slice(0, 500) },
+      data: { lastError: formatSendError(error).slice(0, 200) },
     });
     return kind;
   }
@@ -314,7 +286,7 @@ export async function recordSendFailure(instanceId: string, error: string) {
     where: { id: instanceId },
     data: {
       consecutiveErrors: errors,
-      lastError: error.slice(0, 500),
+      lastError: formatSendError(error).slice(0, 200),
       pausedUntil,
     },
   });

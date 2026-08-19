@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { formatSendError } from "@/lib/send-error";
 
 type Instance = {
   id: string;
@@ -277,7 +278,7 @@ export default function InstancesManager({ embedded = false }: { embedded?: bool
                   {!inst.health?.ok && inst.health?.reason && (
                     <p className="text-amber-600">Anti-bloqueio: {inst.health.reason}</p>
                   )}
-                  {inst.lastError && <p className="text-red-500 truncate">{inst.lastError}</p>}
+                  {inst.lastError && <p className="text-red-500 truncate">{formatSendError(inst.lastError)}</p>}
                 </div>
 
                 <div className="flex flex-wrap gap-2">
