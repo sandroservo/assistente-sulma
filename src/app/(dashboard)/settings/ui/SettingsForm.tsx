@@ -405,8 +405,8 @@ export function SettingsForm({ settings, defaultSystemPrompt }: SettingsFormProp
               <div className="bg-gray-50 p-4 rounded-lg space-y-2">
                 <p className="text-sm font-medium text-gray-700">Eventos monitorados:</p>
                 <ul className="text-xs text-gray-600 space-y-1">
-                  <li>✅ <strong>PAYMENT_CONFIRMED</strong> - Marca lead como FECHADO</li>
-                  <li>✅ <strong>PAYMENT_RECEIVED</strong> - Marca lead como FECHADO</li>
+                  <li>✅ <strong>PAYMENT_CONFIRMED</strong> - Move o lead para Conduzir para matrícula</li>
+                  <li>✅ <strong>PAYMENT_RECEIVED</strong> - Move o lead para Conduzir para matrícula</li>
                   <li>⚠️ <strong>PAYMENT_OVERDUE</strong> - Envia lembrete ao lead</li>
                 </ul>
               </div>
@@ -434,7 +434,7 @@ export function SettingsForm({ settings, defaultSystemPrompt }: SettingsFormProp
                   className="font-mono text-sm"
                 />
                 <p className="text-xs text-gray-500">
-                  Deixe vazio para usar o prompt padrão do arquivo agent/systemprompt.md
+                  Este texto é o que a Sulma usa de verdade nas conversas. Salve depois de editar.
                 </p>
               </div>
               <Button

@@ -222,11 +222,10 @@ export async function evolutionSendMedia({
  * Simula velocidade de digitação humana (~50-80 caracteres por segundo)
  */
 function calculateTypingDelay(text: string): number {
-  const baseDelay = 500; // Delay mínimo de 500ms
-  const charsPerSecond = 60; // Velocidade média de digitação
+  const baseDelay = 150;
+  const charsPerSecond = 80;
   const calculatedDelay = (text.length / charsPerSecond) * 1000;
-  const maxDelay = 4000; // Máximo de 4 segundos
-  
+  const maxDelay = 1200;
   return Math.min(baseDelay + calculatedDelay, maxDelay);
 }
 
@@ -571,7 +570,7 @@ export async function evolutionSendTextHumanized({ number, text, instanceName, i
     
     // Pausa entre mensagens (se não for a última)
     if (i < parts.length - 1) {
-      await sleep(800); // 800ms entre mensagens
+      await sleep(250);
     }
   }
 }

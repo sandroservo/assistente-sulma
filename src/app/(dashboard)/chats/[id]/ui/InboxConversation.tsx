@@ -12,7 +12,7 @@ import { Mic, Image as ImageIcon, FileText, Video, Bot, UserCheck, Reply, Pencil
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 
-const POLLING_INTERVAL = 2000;
+const POLLING_INTERVAL = 15000;
 
 interface Message {
   id: string;
@@ -83,7 +83,7 @@ function ReadReceipt({ isOut, status }: { isOut: boolean; status?: string | null
   const isDelivered = status === "delivered" || isRead;
   const fillColor = isRead ? "#53bdeb" : isDelivered ? "#8696a0" : "#8696a0";
 
-  if (!isDelivered && status === "sent") {
+  if (!isDelivered && status !== "delivered" && status !== "read") {
     return (
       <svg viewBox="0 0 12 11" width="12" height="11" className="inline-block ml-1 flex-shrink-0">
         <path
@@ -183,12 +183,12 @@ export default function InboxConversation({
   }, [router]);
 
   useEffect(() => {
-    if (messages.length > 0) {
-      const last = messages[messages.length - 1];
+    const lastReal = [...messages].reverse().find((m) => !m.id.startsWith("tmp-"));
+    if (lastReal) {
       lastMessageTime.current =
-        typeof last.createdAt === "string"
-          ? last.createdAt
-          : new Date(last.createdAt).toISOString();
+        typeof lastReal.createdAt === "string"
+          ? lastReal.createdAt
+          : new Date(lastReal.createdAt).toISOString();
     }
   }, [messages]);
 
@@ -196,17 +196,18 @@ export default function InboxConversation({
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const fetchNewMessages = useCallback(async () => {
+  const fetchNewMessages = useCallback(async (full = false) => {
     try {
-      const url = lastMessageTime.current
-        ? `/api/conversations/${conversationId}/messages?after=${encodeURIComponent(lastMessageTime.current)}`
-        : `/api/conversations/${conversationId}/messages`;
+      const url =
+        !full && lastMessageTime.current
+          ? `/api/conversations/${conversationId}/messages?after=${encodeURIComponent(lastMessageTime.current)}`
+          : `/api/conversations/${conversationId}/messages`;
       const res = await fetch(url);
       if (!res.ok) return;
       const data = await res.json();
       if (data.ok && data.messages?.length > 0) {
         setMessages((prev) => {
-          const existingMap = new Map(prev.map((m) => [m.id, m]));
+          const existingMap = new Map(prev.filter((m) => !m.id.startsWith("tmp-")).map((m) => [m.id, m]));
           let changed = false;
           for (const incoming of data.messages as Message[]) {
             const existing = existingMap.get(incoming.id);
@@ -220,7 +221,8 @@ export default function InboxConversation({
               changed = true;
             }
           }
-          if (!changed) return prev;
+          const hadOptimistic = prev.some((m) => m.id.startsWith("tmp-"));
+          if (!changed && !hadOptimistic && prev.length === existingMap.size) return prev;
           return Array.from(existingMap.values()).sort(
             (a, b) =>
               new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
@@ -233,13 +235,45 @@ export default function InboxConversation({
   }, [conversationId]);
 
   useEffect(() => {
-    const interval = setInterval(fetchNewMessages, POLLING_INTERVAL);
-    return () => clearInterval(interval);
-  }, [fetchNewMessages]);
+    let es: EventSource | null = null;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const refresh = () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => fetchNewMessages(true), 80);
+    };
+    try {
+      es = new EventSource("/api/conversations/stream");
+      es.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data);
+          if (data.type === "ready") return;
+          if (!data.conversationId || data.conversationId === conversationId) {
+            refresh();
+          }
+        } catch {
+          refresh();
+        }
+      };
+    } catch {
+      /* usa polling */
+    }
+    const interval = setInterval(() => fetchNewMessages(false), POLLING_INTERVAL);
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      clearInterval(interval);
+      es?.close();
+    };
+  }, [conversationId, fetchNewMessages]);
 
-  // Expõe fetchNewMessages e setReplyingTo para o composer
+  // Expõe fetch e envio otimista para o composer
   useEffect(() => {
-    (window as any).__inboxRefetch = fetchNewMessages;
+    (window as any).__inboxRefetch = () => fetchNewMessages(true);
+    (window as any).__inboxAddOptimistic = (msg: Message) => {
+      setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+    };
+    (window as any).__inboxRemoveOptimistic = (id: string) => {
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+    };
     (window as any).__inboxSetReply = (msg: Message | null) => {
       if (typeof (window as any).__composerSetReply === "function") {
         (window as any).__composerSetReply(msg);
@@ -247,6 +281,8 @@ export default function InboxConversation({
     };
     return () => {
       delete (window as any).__inboxRefetch;
+      delete (window as any).__inboxAddOptimistic;
+      delete (window as any).__inboxRemoveOptimistic;
       delete (window as any).__inboxSetReply;
     };
   }, [fetchNewMessages]);

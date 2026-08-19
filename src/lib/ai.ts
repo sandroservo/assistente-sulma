@@ -5,6 +5,8 @@
  * Serviço de IA da Sulma
  */
 
+import { readFileSync } from "fs";
+import path from "path";
 import OpenAI from "openai";
 import { prisma } from "./prisma";
 import { getSystemSettings } from "./settings";
@@ -64,59 +66,32 @@ function getPeriodoDoDia(): { periodo: string; saudacao: string; horaFormatada: 
   return { periodo: "noite", saudacao: "Boa noite", horaFormatada };
 }
 
-const DEFAULT_SYSTEM_PROMPT = `Você é a Sulma, consultora de saúde do Clube Amo Vidas. Você fala por WhatsApp com leads que podem virar clientes.
+const GENERIC_FALLBACK_PROMPT =
+  "Você é a Sulma. Fale por WhatsApp de forma humana, curta e clara. Siga só o que estiver na base de conhecimento. Não invente valores nem regras.";
 
-CONVERSA NATURAL (PRIORIDADE MÁXIMA):
-- Reaja ao que a pessoa disse antes de fazer a próxima pergunta. Nunca ignore a mensagem dela e pule direto para uma pergunta de script.
-- Exemplo: se ela disser "é pra mim e pro meu filho", não responda só "Tem alguém com mais de 60 anos?". Reaja antes: "Que legal, então são vocês dois! E no caso de vocês, tem alguém com mais de 60 anos?"
-- Se ela contar algo (ex.: "tô precisando fazer uns exames"), reconheça com uma frase curta antes de responder: "Entendi, então você tá buscando cuidar disso...", e aí traga a informação ou a próxima pergunta.
-- Deixe a conversa fluir: às vezes a pessoa responde algo que já responde a outra pergunta; use isso e não repita perguntas. Às vezes ela pergunta algo no meio; responda com naturalidade e depois retome se precisar.
-- Sua mensagem deve parecer uma resposta à mensagem dela, não um bloco genérico + pergunta. Evite começar direto com uma pergunta sem nenhum "gancho" no que ela falou.
-- Se ela fizer uma pergunta, responda primeiro (com base na Tool Information) e, se fizer sentido, acrescente uma pergunta ou convite natural no final — não o contrário (pergunta primeiro, resposta depois).
+function loadFileSystemPrompt(): string {
+  try {
+    return readFileSync(path.join(process.cwd(), "agent", "systemprompt.md"), "utf-8").trim();
+  } catch {
+    return "";
+  }
+}
 
-TOM E ESTILO:
-- Escreva como no WhatsApp para um conhecido: calorosa, direta. Use "Olha...", "Então...", "Ah, ótimo!", coloquial ("né", "tá", "pra") quando cair bem.
-- Frases corridas, não listas. Emoji de vez em quando. NUNCA soe como FAQ ou script.
-
-REGRAS DE CONTEÚDO:
-- Use EXCLUSIVAMENTE o que está em <Tool Information>. NUNCA invente dados (valores, regras, prazos).
-- Se houver bloco "Cobranças vencidas" na Tool Information, use para responder perguntas sobre clientes em atraso, inadimplentes ou faturas vencidas. Resuma de forma objetiva (ex.: "Temos X clientes com cobrança em atraso").
-- Você SEMPRE recebe a base de conhecimento; use o que for mais próximo da dúvida (planos, valores, benefícios). Se a informação exata não estiver lá, resuma o que tiver de relevante e ofereça transferir para um atendente para detalhes: "Quer que eu te passe para alguém da equipe te dar essa informação direitinho?"
-- NUNCA diga "Não tenho essa informação no momento" nem que não tem a informação. Prefira usar algo da base + oferecer atendente humano.
-- Antes de citar preço ou enviar link: confira se está na Tool Information. Só envie links que existam nela. Se houver mais de um valor (ex.: 37,00 e 37,90), use o principal e pode oferecer o link oficial para confirmar.
-- Respostas curtas (3–4 frases). Uma pergunta por vez quando for perguntar.
-- Se pedir atendente humano, confirme que vai transferir. Se não souber o nome, pergunte de forma natural.
-- O Amo Vidas NÃO é plano de saúde, NÃO é convênio. É um CLUBE DE BENEFÍCIOS em saúde por assinatura.
-- NUNCA prometa cura, cobertura total irrestrita, ou chame de plano de saúde.
-- A assinatura NUNCA é o produto principal. O produto é o CUIDADO (check-up, consulta, exame). A assinatura é só o meio mais econômico.
-
-QUIZ CONVERSACIONAL (fluxo natural, NÃO como script rígido):
-Após se apresentar e saber o nome, conduza o quiz de forma natural para qualificar o lead:
-1. MOMENTO DE SAÚDE — "Hoje, qual dessas situações mais parece com você? Faz tempo que não faz exames, quer prevenir, sentindo algo, ou só se informando?"
-2. ROTINA DE EXAMES — "Quando foi a última vez que fez um check-up ou exames de rotina?"
-3. TIPO DE CUIDADO — "Pensando no cuidado com saúde, o que seria mais importante: check-up completo, consultas quando precisar, exames específicos, ou tudo aos poucos?"
-4. FAMÍLIA — "Esse cuidado seria só pra você ou pra mais alguém da família?"
-5. EMAIL E CIDADE — Em algum momento natural da conversa (depois de saber o nome, antes do resumo), peça email e cidade de forma leve. Pode ser junto ou separado: "Me passa seu email e de qual cidade você é? Assim consigo te enviar as informações certinhas 📩" ou "Qual seu email?" e depois "E você é de onde?". Se já tiver o email, NÃO peça novamente. Se já tiver a cidade, NÃO peça novamente.
-6. PAGAMENTO — "Você prefere pagar tudo quando precisa ou organizar por mês?"
-7. RESUMO PERSONALIZADO — Faça um resumo do que entendeu: "Pelo que me contou, o ideal pra você é..." (momento CHAVE — gerar "ela me entendeu")
-8. ENTRADA DA ASSINATURA — Só DEPOIS do resumo: "Quem faz check-up e consultas com frequência costuma economizar bastante usando a assinatura, em vez de pagar tudo avulso."
-9. DECISÃO SUAVE — "Quer que eu te mostre o formato mais vantajoso no seu caso?"
-
-IMPORTANTE: O quiz é um GUIA, não um script. Se o lead já respondeu algo, não repita. Se ele pergunta algo, responda e retome depois. Pule perguntas quando a pessoa já deu a informação.
-
-REGRA DE OURO:
-- Entendimento do produto vale mais que renda
-- Pergunta boa vale mais que resposta rápida
-- A pessoa se diagnostica sozinha — não empurre nada
-- O plano aparece como solução lógica, não como venda
-
-HANDOFF — Transfira para humano quando:
-- Lead pede valores exatos por procedimento
-- Lead demonstra intenção clara de contratar ("quero assinar", "pode mandar o link")
-- Pergunta vira comparação direta com plano de saúde
-- Frase de transição: "Posso te explicar melhor ou, se preferir, te coloco agora com um atendente humano pra tirar todas as dúvidas finais 🙂"`;
-
-export { DEFAULT_SYSTEM_PROMPT };
+/** Prompt da Sulma: sempre o texto salvo em Configurações → Prompt. */
+export async function resolveSystemPrompt(): Promise<string> {
+  const settings = await getSystemSettings();
+  const fromSettings = (settings.systemPrompt || "").trim();
+  if (fromSettings && fromSettings !== "(configurado)") {
+    console.log("[AI] system prompt: /settings", fromSettings.length, "chars");
+    return fromSettings;
+  }
+  const fromFile = loadFileSystemPrompt();
+  if (fromFile) {
+    console.log("[AI] system prompt: agent/systemprompt.md (settings vazio)", fromFile.length, "chars");
+    return fromFile;
+  }
+  return GENERIC_FALLBACK_PROMPT;
+}
 
 export async function generateAIResponse(
   userMessage: string,
@@ -131,8 +106,7 @@ export async function generateAIResponse(
       return { response: generateFallbackResponse(userMessage, context.leadName) };
     }
 
-    // Usa prompt do banco (/settings) ou o padrão
-    const systemPrompt = settings.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    const systemPrompt = await resolveSystemPrompt();
 
     // Base de conhecimento única (single-tenant): busca toda a base, sem filtro de organização.
     const isFirstMessage = context.messageHistory.length === 0;
@@ -286,7 +260,7 @@ export async function generateAIResponse(
     if (toolInformation) {
       messages.push({
         role: "system",
-        content: `${toolInformation}\n\nIMPORTANTE: Use o bloco <Tool Information> acima para responder perguntas sobre planos, preços, parceiros do Clube de Desconto, benefícios, links e regras. Consulte sempre essa base antes de responder.`,
+        content: `${toolInformation}\n\nUse o bloco <Tool Information> para fatos (cursos, valores, regras, links). Não invente. Se o dado não estiver na base, diga que confirma com a equipe.`,
       });
     }
 
@@ -309,7 +283,7 @@ export async function generateAIResponse(
     if (isFirstMessage) {
       messages.push({
         role: "system",
-        content: `Esta é a PRIMEIRA mensagem do cliente. Apresente-se de forma breve e calorosa (ex.: "${saudacao}! Sou a Sulma, consultora do Amo Vidas 💜") e pergunte o nome de forma natural, como uma pessoa real no WhatsApp. Não use texto de script.`,
+        content: `Esta é a primeira mensagem do lead. Agora são ${horaFormatada} (${saudacao}). Apresente-se e conduza a conversa EXATAMENTE como o System Prompt define. Não use outra marca, produto ou script que não esteja no prompt.`,
       });
     } else if (context.leadName) {
       messages.push({
@@ -535,7 +509,7 @@ async function updateLeadData(
     if (data.email) updateData.email = data.email;
     if (data.city) updateData.city = data.city;
 
-    // Atualiza apenas nome/email; status segue o fluxo NOVO → EM_ATENDIMENTO → QUALIFICADO
+    // Atualiza apenas nome/email; status segue o funil NOVO → ENTENDER → ORIENTAR → QUALIFICAR → REGISTRAR → CONDUZIR_MATRICULA
     if (Object.keys(updateData).length > 0) {
       await prisma.lead.update({
         where: { id: leadId },
@@ -549,30 +523,11 @@ async function updateLeadData(
 }
 
 function generateFallbackResponse(text: string, leadName?: string | null): string {
-  const t = text.toLowerCase();
   const greeting = leadName ? `${leadName}` : "";
-
-  if (t.match(/^(oi|olá|ola|hey|bom dia|boa tarde|boa noite|e ai|eai)/)) {
-    return `Olá! 👋 Eu sou a Sulma, consultora de saúde do Amo Vidas. Como posso te chamar?`;
-  }
-
-  if (t.includes("plano") || t.includes("valor") || t.includes("preço")) {
-    return `${greeting ? greeting + ", t" : "T"}emos 3 planos: Plano Rotina (R$ 37,90), Plano Especializado (R$ 57,90) e Cobertura Total (R$ 97,00). O foco é cuidado de rotina ou exames mais específicos?`;
-  }
-
-  if (t.includes("amo vidas") || t.includes("o que é")) {
-    return `Amo Vidas é um clube de benefícios em saúde, com assinatura mensal, que dá acesso a consultas, exames e descontos. ${greeting ? greeting + ", v" : "V"}ocê busca rotina ou exames mais específicos?`;
-  }
-
-  if (t.includes("obrigado") || t.includes("obrigada") || t.includes("valeu")) {
-    return `Imagina${greeting ? ", " + greeting : ""}! 😊 Se precisar de mais alguma coisa, é só chamar. Tenha um ótimo dia! 🌟`;
-  }
-
   if (!leadName) {
-    return `Olá! Sou a Sulma, consultora do Amo Vidas. Antes de continuar, como posso te chamar? 😊`;
+    return "Olá! Eu sou a Sulma. Como posso te chamar?";
   }
-
-  return `${greeting}, entendi! Me conta mais sobre o que você precisa que eu te ajudo. Se preferir falar com uma pessoa, é só me avisar! 😊`;
+  return `${greeting}, te ouvi. Me conta um pouco mais do que você busca que eu te ajudo. Se preferir falar com alguém da equipe, é só pedir.`;
 }
 
 export function shouldTransferToHuman(text: string): boolean {
@@ -651,73 +606,122 @@ export function detectLeadStatus(
     return "PERDIDO";
   }
 
-  // FECHADO - Sinais de fechamento/compra
-  const closedKeywords = [
-    "vou comprar",
-    "quero comprar",
-    "fechar negócio",
-    "fechar negocio",
-    "vou fechar",
-    "fechado",
-    "pode mandar o pix",
-    "manda o pix",
-    "vou pagar",
-    "quero pagar",
-    "aceito",
-    "vamos fechar",
-    "combinado",
-    "pode enviar",
-    "manda o contrato",
-    "vou assinar",
-    "contrato assinado",
-    "pagamento feito",
+  // CONDUZIR_MATRICULA - Sinais de matrícula / inscrição concluída
+  const enrolledKeywords = [
+    "vou me matricular",
+    "quero me matricular",
+    "já me matriculei",
+    "ja me matriculei",
+    "matrícula feita",
+    "matricula feita",
+    "paguei a matrícula",
+    "paguei a matricula",
+    "enviei os documentos",
+    "documentos enviados",
+    "inscrição feita",
+    "inscricao feita",
+    "fui aprovado",
+    "fui aprovada",
+    "confirma a matrícula",
+    "confirma a matricula",
+    "pode confirmar a matrícula",
+    "pode confirmar a matricula",
+    "vou pagar a matrícula",
+    "vou pagar a matricula",
     "já paguei",
     "ja paguei",
     "paguei agora",
+    "manda o boleto da matrícula",
+    "manda o boleto da matricula",
   ];
-  if (closedKeywords.some((k) => msg.includes(k))) {
-    return "FECHADO";
+  if (enrolledKeywords.some((k) => msg.includes(k))) {
+    return "CONDUZIR_MATRICULA";
   }
 
-  // QUALIFICADO - Somente quando demonstra interesse REAL em fechar/contratar um plano específico
-  // Frases genéricas como "tenho interesse", "quero saber mais" NÃO qualificam
+  // REGISTRAR - quer iniciar inscrição / enviar documentos
+  const registerKeywords = [
+    "quero me inscrever",
+    "como me inscrevo",
+    "como faço a inscrição",
+    "como faco a inscricao",
+    "ficha de inscrição",
+    "ficha de inscricao",
+    "enviar documentos",
+    "quais documentos",
+    "iniciar matrícula",
+    "iniciar matricula",
+    "fazer a inscrição",
+    "fazer a inscricao",
+    "protocolo de inscrição",
+    "quero me cadastrar",
+    "abrir inscrição",
+    "abrir inscricao",
+  ];
+  if (registerKeywords.some((k) => msg.includes(k)) && currentStatus !== "CONDUZIR_MATRICULA" && currentStatus !== "FECHADO") {
+    return "REGISTRAR";
+  }
+
+  // QUALIFICAR - curso específico, valor, vestibular, bolsa
   const qualifiedKeywords = [
-    "quero assinar",
-    "quero contratar",
-    "vou assinar",
-    "quero o plano",
-    "quero esse plano",
-    "quero o rotina",
-    "quero o especializado",
-    "quero o cobertura total",
-    "gostei do plano",
-    "gostei do rotina",
-    "gostei do especializado",
-    "como faço pra assinar",
-    "como faco pra assinar",
-    "como assino",
-    "me manda o link",
-    "manda o link",
-    "pode mandar o link",
-    "quero fechar",
-    "bora fechar",
-    "vamos fechar",
+    "quanto custa",
+    "qual o valor",
+    "mensalidade",
+    "valor do curso",
+    "tem bolsa",
+    "bolsa de estudo",
+    "desconto",
+    "vestibular",
+    "nota de corte",
+    "enem",
+    "quero o curso",
+    "curso de",
+    "me inscrever no",
+    "turma de",
+    "período noturno",
+    "periodo noturno",
+    "matutino",
+    "ead",
+    "quero esse curso",
     "formas de pagamento",
     "como pago",
-    "aceito o plano",
-    "pode ser esse",
-    "vou querer",
-    "quero esse",
   ];
   const hasQualifiedSignal = qualifiedKeywords.some((k) => msg.includes(k));
-  if (hasQualifiedSignal && currentStatus !== "FECHADO") {
-    return "QUALIFICADO";
+  if (hasQualifiedSignal && currentStatus !== "CONDUZIR_MATRICULA" && currentStatus !== "FECHADO") {
+    return "QUALIFICAR";
   }
 
-  // EM_ATENDIMENTO - lead que já interagiu significativamente (6+ mensagens no histórico = conversa avançou)
-  // Antes disso permanece NOVO para o time de vendas identificar quem entrou e não engajou
-  if (currentStatus === "NOVO" && messageHistory.length >= 6) {
-    return "EM_ATENDIMENTO";
+  // ORIENTAR - dúvidas sobre cursos, campus, processo
+  const orientKeywords = [
+    "quais cursos",
+    "que cursos",
+    "como funciona",
+    "campus",
+    "grade curricular",
+    "duração do curso",
+    "duracao do curso",
+    "é presencial",
+    "e presencial",
+    "segunda graduação",
+    "segunda graduacao",
+    "transferência",
+    "transferencia",
+    "processo seletivo",
+    "como faço para estudar",
+    "como faco para estudar",
+  ];
+  if (
+    orientKeywords.some((k) => msg.includes(k)) &&
+    currentStatus !== "CONDUZIR_MATRICULA" &&
+    currentStatus !== "FECHADO" &&
+    currentStatus !== "REGISTRAR" &&
+    currentStatus !== "QUALIFICAR"
+  ) {
+    return "ORIENTAR";
+  }
+
+  // ENTENDER - lead que já interagiu (2+ mensagens = conversa avançou)
+  if (currentStatus === "NOVO" && messageHistory.length >= 2) {
+    return "ENTENDER";
   }
 
   // LEAD_FRIO - Sinais de lead esfriando
@@ -772,7 +776,7 @@ export async function generateConversationSummary(
         {
           role: "system",
           content: `Resuma a conversa abaixo em português (pt-BR), de forma objetiva, em no máximo 5 linhas.
-Inclua: o que o cliente busca, planos/serviços mencionados, objeções, dados coletados (nome, email, cidade), e o status atual da negociação.
+Inclua: o que o interessado busca, cursos mencionados, dúvidas, dados coletados (nome, email, cidade), e a etapa atual do funil (entender, orientar, qualificar, registrar, matrícula).
 Use formato de tópicos curtos. Não invente dados que não estejam na conversa.
 ${leadName ? `Nome do cliente: ${leadName}` : ""}`,
         },

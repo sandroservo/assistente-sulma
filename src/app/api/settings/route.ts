@@ -32,7 +32,7 @@ export async function GET() {
         openaiApiKey: settings.openaiApiKey ? "••••••••" + settings.openaiApiKey.slice(-4) : "",
         openaiModel: settings.openaiModel,
         appUrl: settings.appUrl,
-        systemPrompt: settings.systemPrompt ? "(configurado)" : "",
+        systemPrompt: settings.systemPrompt || "",
         asaasWebhookUrl: settings.asaasWebhookUrl,
         n8nTranscribeWebhook: settings.n8nTranscribeWebhook,
         hasEvolutionToken: !!settings.evolutionToken,
@@ -87,7 +87,7 @@ export async function POST(req: Request) {
     if (body.n8nTranscribeWebhook !== undefined) {
       settings.n8nTranscribeWebhook = body.n8nTranscribeWebhook;
     }
-    if (body.systemPrompt !== undefined) {
+    if (body.systemPrompt !== undefined && body.systemPrompt !== "(configurado)") {
       settings.systemPrompt = body.systemPrompt;
     }
     

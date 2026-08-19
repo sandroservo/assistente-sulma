@@ -36,6 +36,13 @@ import InboxConversation from "./InboxConversation";
 import ChatComposer from "./ChatComposer";
 import LeadSidebar from "./LeadSidebar";
 import { LeadAvatar } from "@/components/LeadAvatar";
+import {
+  FUNNEL_STATUSES,
+  LEAD_STATUS_COLORS,
+  LEAD_STATUS_LABELS,
+  leadStatusLabel,
+  normalizeLeadStatus,
+} from "@/lib/lead-funnel";
 
 interface Tag {
   id: string;
@@ -116,20 +123,12 @@ function getScoreColor(score: number): string {
 
 function getStatusBadge(status: string, ownerType: string) {
   if (ownerType === "human") {
-    return { label: "Atendimento Humano", className: "bg-purple-100 text-purple-700" };
+    return { label: "Atendimento humano", className: "bg-purple-100 text-purple-700" };
   }
-  const map: Record<string, { label: string; className: string }> = {
-    NOVO: { label: "Novo", className: "bg-blue-100 text-blue-700" },
-    EM_ATENDIMENTO: { label: "Em Atendimento", className: "bg-yellow-100 text-yellow-700" },
-    CONSCIENTIZADO: { label: "Conscientizado", className: "bg-cyan-100 text-cyan-700" },
-    QUALIFICADO: { label: "Qualificado", className: "bg-green-100 text-green-700" },
-    PROPOSTA_ENVIADA: { label: "Proposta Enviada", className: "bg-purple-100 text-purple-700" },
-    EM_NEGOCIACAO: { label: "Em Negociação", className: "bg-orange-100 text-orange-700" },
-    HUMANO_SOLICITADO: { label: "Aguardando Humano", className: "bg-orange-100 text-orange-700" },
-    FECHADO: { label: "Fechado", className: "bg-emerald-100 text-emerald-700" },
-    PERDIDO: { label: "Perdido", className: "bg-red-100 text-red-700" },
+  return {
+    label: leadStatusLabel(status),
+    className: LEAD_STATUS_COLORS[status] || "bg-gray-100 text-gray-700",
   };
-  return map[status] || { label: status.replace(/_/g, " "), className: "bg-gray-100 text-gray-700" };
 }
 
 export default function ChatPageClient({
@@ -737,20 +736,18 @@ export default function ChatPageClient({
                 <div>
                   <p className="text-[11px] text-gray-400 uppercase tracking-wider mb-1.5">Status do Lead</p>
                   <select
-                    value={lead.status}
+                    value={normalizeLeadStatus(lead.status)}
                     onChange={(e) => handleStatusChange(e.target.value)}
                     className="w-full px-3 py-2 text-sm border rounded-lg bg-white focus:ring-2 focus:ring-[#001A5E] focus:outline-none cursor-pointer"
                     aria-label="Alterar status do lead"
                   >
-                    <option value="NOVO">Novo</option>
-                    <option value="EM_ATENDIMENTO">Em Atendimento</option>
-                    <option value="CONSCIENTIZADO">Conscientizado</option>
-                    <option value="QUALIFICADO">Qualificado</option>
-                    <option value="PROPOSTA_ENVIADA">Proposta Enviada</option>
-                    <option value="EM_NEGOCIACAO">Em Negociação</option>
-                    <option value="AGUARDANDO_RESPOSTA">Aguardando Resposta</option>
-                    <option value="FECHADO">Fechado</option>
-                    <option value="LEAD_FRIO">Lead Frio</option>
+                    {FUNNEL_STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {LEAD_STATUS_LABELS[status]}
+                      </option>
+                    ))}
+                    <option value="AGUARDANDO_RESPOSTA">Aguardando resposta</option>
+                    <option value="LEAD_FRIO">Lead frio</option>
                     <option value="PERDIDO">Perdido</option>
                   </select>
                 </div>

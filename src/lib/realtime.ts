@@ -28,7 +28,7 @@ export function emitConversationUpdate(
     type: payload.type ?? "conversation_update",
     conversationId: payload.conversationId,
     leadId: payload.leadId,
-    at: 0, // stamp no consumidor/SSE (Date.now() é permitido em runtime normal do server)
+    at: Date.now(),
   };
   try {
     emitter.emit(CHANNEL, evt);

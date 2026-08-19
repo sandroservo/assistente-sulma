@@ -160,7 +160,7 @@ export async function POST(req: Request) {
           await prisma.lead.update({
             where: { id: lead.id },
             data: {
-              status: "FECHADO",
+              status: "CONDUZIR_MATRICULA",
               name: lead.name || customerName || null,
               email: lead.email || email || null,
             },
@@ -186,7 +186,7 @@ export async function POST(req: Request) {
               },
             });
           }
-          console.log(`[Asaas Webhook] Lead ${lead.id} marcado como FECHADO`);
+          console.log(`[Asaas Webhook] Lead ${lead.id} marcado como CONDUZIR_MATRICULA`);
         } else {
           console.log("[Asaas Webhook] Lead não encontrado para:", phone || email || payment.externalReference);
         }
@@ -197,7 +197,7 @@ export async function POST(req: Request) {
         if (lead) {
           await prisma.lead.update({
             where: { id: lead.id },
-            data: { status: "QUALIFICADO" },
+            data: { status: "QUALIFICAR" },
           });
           try {
             await evolutionSendText({

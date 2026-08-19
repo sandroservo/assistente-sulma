@@ -7,11 +7,17 @@
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { syncEvolutionInbox } from "@/lib/evolution-sync";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
+    // Não espera o sync (evita deadlock Next.js ao chamar o próprio webhook).
+    void syncEvolutionInbox().catch((err) => {
+      console.error("[conversations] sync Evolution:", err);
+    });
+
     const convos = await prisma.conversation.findMany({
       orderBy: { lastMessageAt: "desc" },
       include: {

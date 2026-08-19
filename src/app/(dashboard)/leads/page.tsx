@@ -58,7 +58,7 @@ export default async function LeadsPage() {
           <div>
             <h1 className="text-xl md:text-2xl font-bold text-gray-800">Kanban de Leads</h1>
             <p className="text-gray-500 text-sm">
-              Gerencie seus clientes através do funil de vendas
+              Novo → Entender → Orientar → Qualificar → Registrar → Matrícula
             </p>
           </div>
         </div>

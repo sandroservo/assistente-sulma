@@ -2,7 +2,7 @@
  * Autor: Sandro Servo
  * Site: https://cloudservo.com.br
  * 
- * Componente Kanban de Leads estilo Amo Vidas
+ * Componente Kanban de Leads — funil Unisulma
  * Com busca, abas, edição e exclusão
  * Aprimorado: Resumo, Prioridade, Tempo na Etapa, Origem, Responsável
  */
@@ -16,6 +16,7 @@ import {
   ArrowUp, ArrowDown, Minus, Clock, Instagram, Send, User, MessageCircle
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { KANBAN_COLUMNS, normalizeLeadStatus } from "@/lib/lead-funnel";
 import {
   DragDropContext,
   Droppable,
@@ -58,80 +59,7 @@ interface LeadsKanbanProps {
   initialHasMore?: boolean;
 }
 
-const COLUMNS = [
-  {
-    id: "NOVO",
-    title: "Novo",
-    bgColor: "bg-[#EEF2FF]",
-    headerBg: "bg-[#E8EDF8]",
-    borderColor: "border-[#C5D0E8]",
-    badgeColor: "bg-[#001A5E]"
-  },
-  {
-    id: "EM_ATENDIMENTO",
-    title: "Em Atendimento",
-    bgColor: "bg-orange-50",
-    headerBg: "bg-orange-100",
-    borderColor: "border-orange-200",
-    badgeColor: "bg-orange-500"
-  },
-  {
-    id: "CONSCIENTIZADO",
-    title: "Conscientizado",
-    bgColor: "bg-cyan-50",
-    headerBg: "bg-cyan-100",
-    borderColor: "border-cyan-200",
-    badgeColor: "bg-cyan-500"
-  },
-  {
-    id: "QUALIFICADO",
-    title: "Qualificado",
-    bgColor: "bg-blue-50",
-    headerBg: "bg-blue-100",
-    borderColor: "border-blue-200",
-    badgeColor: "bg-blue-500"
-  },
-  {
-    id: "FECHADO",
-    title: "Fechado",
-    bgColor: "bg-green-50",
-    headerBg: "bg-green-100",
-    borderColor: "border-green-200",
-    badgeColor: "bg-green-500"
-  },
-  {
-    id: "PERDIDO",
-    title: "Perdido",
-    bgColor: "bg-red-50",
-    headerBg: "bg-red-100",
-    borderColor: "border-red-200",
-    badgeColor: "bg-red-500"
-  },
-  {
-    id: "LEAD_FRIO",
-    title: "Lead Frio",
-    bgColor: "bg-slate-50",
-    headerBg: "bg-slate-100",
-    borderColor: "border-slate-200",
-    badgeColor: "bg-slate-500"
-  },
-  {
-    id: "HUMANO_SOLICITADO",
-    title: "Aguardando Humano",
-    bgColor: "bg-yellow-50",
-    headerBg: "bg-yellow-100",
-    borderColor: "border-yellow-200",
-    badgeColor: "bg-yellow-500"
-  },
-];
-
-const CATEGORIES = [
-  { id: "todos", label: "Todos" },
-  { id: "geral", label: "Geral" },
-  { id: "rotina", label: "Cliente Rotina" },
-  { id: "especializado", label: "Cliente Especializado" },
-  { id: "cobertura_total", label: "Cliente Cobertura Total" },
-];
+const COLUMNS = KANBAN_COLUMNS;
 
 const POLLING_INTERVAL = 60000; // 60 segundos
 
@@ -142,7 +70,6 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingMore, setLoadingMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeCategory, setActiveCategory] = useState("todos");
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [deletingLead, setDeletingLead] = useState<Lead | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -161,7 +88,7 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
   useEffect(() => { leadsLengthRef.current = leads.length; }, [leads.length]);
   useEffect(() => setMounted(true), []);
 
-  const fetchLeads = useCallback(async (replace = true, search = searchQuery, category = activeCategory) => {
+  const fetchLeads = useCallback(async (replace = true, search = searchQuery) => {
     try {
       const currentLength = leadsLengthRef.current;
       const skip = replace ? 0 : currentLength;
@@ -171,7 +98,6 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
         take: String(take),
       });
       if (search) params.set("search", search);
-      if (category && category !== "todos") params.set("category", category);
 
       const res = await fetch(`/api/leads?${params.toString()}`);
       if (res.ok) {
@@ -214,7 +140,7 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
     } catch (error) {
       console.error("Erro ao buscar leads:", error);
     }
-  }, [searchQuery, activeCategory]);
+  }, [searchQuery]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
@@ -225,7 +151,6 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
         take: String(PAGE_SIZE),
       });
       if (searchQuery) params.set("search", searchQuery);
-      if (activeCategory && activeCategory !== "todos") params.set("category", activeCategory);
 
       const res = await fetch(`/api/leads?${params.toString()}`);
       if (res.ok) {
@@ -242,7 +167,7 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
     } finally {
       setLoadingMore(false);
     }
-  }, [hasMore, loadingMore, searchQuery, activeCategory]);
+  }, [hasMore, loadingMore, searchQuery]);
 
   // Mantém refs atualizadas para evitar recriação de intervals/observers
   useEffect(() => { fetchLeadsRef.current = fetchLeads; }, [fetchLeads]);
@@ -258,12 +183,12 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
       clearTimeout(searchTimeoutRef.current);
     }
     searchTimeoutRef.current = setTimeout(() => {
-      fetchLeads(true, searchQuery, activeCategory);
+      fetchLeads(true, searchQuery);
     }, 300);
     return () => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     };
-  }, [searchQuery, activeCategory]);
+  }, [searchQuery]);
 
   // Polling estável — usa ref para não recriar o interval
   useEffect(() => {
@@ -292,7 +217,7 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
   }, [mounted]);
 
   const getLeadsByStatus = (status: string) => {
-    return leads.filter((lead) => lead.status === status);
+    return leads.filter((lead) => normalizeLeadStatus(lead.status) === status);
   };
 
   const updateLeadStatus = async (leadId: string, newStatus: string) => {
@@ -341,7 +266,6 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: formData.get("name"),
-          category: formData.get("category"),
           email: formData.get("email") || null,
           city: formData.get("city") || null,
           priority: formData.get("priority"),
@@ -461,25 +385,8 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
 
   return (
     <>
-      {/* Barra de busca e abas */}
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-hide">
-          {CATEGORIES.map((cat) => (
-            <button
-              key={cat.id}
-              onClick={() => setActiveCategory(cat.id)}
-              className={cn(
-                "px-4 py-2 rounded-full text-sm font-medium transition-all whitespace-nowrap shrink-0",
-                activeCategory === cat.id
-                  ? "bg-[#001A5E] text-white shadow-md"
-                  : "bg-white text-gray-600 border border-gray-200 hover:border-[#F9A825] hover:text-[#003080]"
-              )}
-            >
-              {cat.label}
-            </button>
-          ))}
-        </div>
-
+      {/* Busca */}
+      <div className="mb-4 flex justify-end">
         <div className="relative w-full sm:w-80">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
           <input
@@ -507,7 +414,7 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
         </div>
       ) : (
         <DragDropContext onDragEnd={onDragEnd}>
-          <div className="flex gap-2 pb-4 min-h-0 overflow-x-auto snap-x snap-mandatory md:grid md:grid-cols-8 scrollbar-hide">
+          <div className="flex gap-2 pb-4 min-h-0 overflow-x-auto snap-x snap-mandatory md:grid md:grid-cols-7 scrollbar-hide">
             {COLUMNS.map((column) => {
               const columnLeads = getLeadsByStatus(column.id);
               return (
@@ -524,7 +431,12 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
                     "px-3 md:px-4 py-2.5 md:py-3 rounded-t-xl flex items-center justify-between shrink-0",
                     column.headerBg
                   )}>
-                    <h3 className="font-semibold text-gray-800 text-sm md:text-base truncate">{column.title}</h3>
+                    <div className="min-w-0 pr-2">
+                      <h3 className="font-semibold text-gray-800 text-sm md:text-[13px] leading-tight">{column.title}</h3>
+                      {"hint" in column && column.hint ? (
+                        <p className="text-[10px] text-gray-500 truncate hidden md:block">{column.hint}</p>
+                      ) : null}
+                    </div>
                     <span className={cn(
                       "text-white text-sm font-medium px-2.5 py-0.5 rounded-full",
                       column.badgeColor
@@ -779,20 +691,6 @@ export function LeadsKanban({ initialLeads, initialHasMore = false }: LeadsKanba
                     <option value="high">Alta</option>
                   </select>
                 </div>
-              </div>
-              <div>
-                <label htmlFor="edit-category" className="block text-sm font-medium text-gray-700 mb-1">Categoria</label>
-                <select
-                  id="edit-category"
-                  name="category"
-                  defaultValue={editingLead.category || "geral"}
-                  className="w-full px-3 py-2 rounded-xl border border-gray-200 focus:border-[#001A5E] focus:ring-2 focus:ring-[#EEF2FF] outline-none text-sm"
-                >
-                  <option value="geral">Geral</option>
-                  <option value="rotina">Cliente Rotina</option>
-                  <option value="especializado">Cliente Especializado</option>
-                  <option value="cobertura_total">Cliente Cobertura Total</option>
-                </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Etiquetas</label>

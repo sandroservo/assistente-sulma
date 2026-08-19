@@ -30,7 +30,7 @@ export async function POST(
       where: { id },
       data: { 
         ownerType: "bot", 
-        status: "EM_ATENDIMENTO" 
+        status: "ENTENDER" 
       },
     });
 

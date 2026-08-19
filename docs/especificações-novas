@@ -1,0 +1,587 @@
+# Especificação Técnica — Plataforma de Atendimento Omnichannel + Chatbot
+
+**Fonte:** engenharia reversa do portal SURI / Chatbot Maker (marca branca `seuchat`), conta **UNISULMA** (`cb101849497`)
+**Levantamento:** 19/08/2026
+**Objetivo:** servir de blueprint funcional e técnico para construção de um projeto equivalente.
+
+> **Aviso de segurança:** o portal expõe em `Configurações → Geral` um token de API da conta. Ele **não foi transcrito** neste documento. Como ele ficou visível em tela durante o levantamento, recomenda-se rotacioná-lo.
+
+---
+
+## 1. Visão geral do produto
+
+Plataforma SaaS multi-tenant que combina quatro produtos em um só:
+
+| Pilar | O que faz |
+|---|---|
+| **Chatbot builder** | Editor visual de fluxos conversacionais com nós de mensagem, condição, captura e transferência |
+| **Inbox de atendimento humano** | Fila multi-agente, multi-departamento, com transbordo do bot para humano |
+| **Campanhas / disparo em massa** | Envio de templates WhatsApp aprovados para listas de contatos |
+| **IA generativa (RAG)** | "Suri Shop Assistant" — assistente com base de conhecimento, ativável por fluxo |
+
+Modelo de negócio: assinatura mensal + volumetria (contatos únicos e mensagens ativas), com preço de excedente.
+
+### Escala real observada (referência de dimensionamento)
+- 1 tenant com **21 departamentos** e **44 usuários** (14 online / 30 offline / 0 ausentes no momento da coleta)
+- **Dashboard (janela 13–19/08/2026):** 6 esperando atendimento, **489 em atendimento**
+- **Inbox ao vivo no mesmo instante:** 7 Esperando · 12 Atendimentos · 483 Automático — os números divergem do dashboard porque a inbox é tempo real e sem filtro de período, e separa a fila do bot ("Automático") da fila humana
+- **906 contatos atendidos / 951 atendimentos finalizados** em 7 dias — finalizados > atendidos porque encerramentos incluem atendimentos iniciados antes da janela do filtro
+- **370 contatos únicos / 764 mensagens ativas** em 7 dias
+- **25 fluxos** publicados em um único bot
+
+---
+
+## 2. Arquitetura observada
+
+### 2.1 Componentes
+
+```
++----------------------------------------------------------+
+|  SPA (Angular hibrido, roteamento por hash)              |
+|  portal.chatbotmaker.io/#/chatbot/{chatbotId}/{modulo}   |
++----------------------------+-----------------------------+
+                             | REST + Cookie (cbm.auth)
++----------------------------v-----------------------------+
+|  API de gestao   portal.chatbotmaker.io/api/v1/...       |
++----------------------------+-----------------------------+
+                             |
++----------------------------v-----------------------------+
+|  API publica por tenant                                  |
+|  https://{chatbotId}.api.suri.ai/                        |
+|  (subdominio dedicado por bot - DNS wildcard)            |
++----------------------------+-----------------------------+
+                             |
+      +--------------+-------+-------+----------------+
+      v              v               v                v
+ WhatsApp Cloud   WebChat SDK   Webhooks p/ ERP   Azure Blob
+   API (Meta)                     do cliente      (midia/docs)
+```
+
+### 2.2 Convenções técnicas confirmadas
+
+| Item | Padrão observado |
+|---|---|
+| Roteamento SPA | `#/chatbot/{chatbotId}/{modulo}/{submodulo}` |
+| Versionamento de telas | Rotas novas usam prefixo `/v2/` (migração incremental de UI) |
+| API de gestão | `GET https://portal.chatbotmaker.io/api/v1/chatbots/{chatbotId}/{recurso}` |
+| Recursos confirmados | `/flows`, `/templateMessage`, `/settings`, `/integrations` |
+| API pública por tenant | `https://{chatbotId}.api.suri.ai/` + token por chatbot |
+| Autenticação portal | Cookie `cbm.auth` (não é Bearer em localStorage) |
+| IDs de entidade | Prefixo `cb` + numérico — **namespace único global** para chatbots, departamentos, usuários, tags e motivos |
+| IDs de canal | `wp` + phone_number_id (WhatsApp), `wc` + id (WebChat) |
+| Armazenamento de mídia | Azure Blob Storage (`cbmstg.blob.core.windows.net/chatbots/{cbId}/media/`) |
+| Chat interno | Provider terceiro (TalkJS) |
+| Nomenclatura de arquivo | `file-{uuid}-{ISO8601}.{ext}` |
+
+**Decisão para o novo projeto:** o namespace global de IDs (`cbXXXXXXXXX` para tudo) é prático para debug e URLs curtas, mas ruim para integridade referencial. Recomenda-se **UUID v7 por tabela + slug público legível**, mantendo a vantagem de ordenação temporal.
+
+---
+
+## 3. Mapa completo de módulos e rotas
+
+| Módulo | Submódulo | Rota | Função |
+|---|---|---|---|
+| **Painel** | — | `/dashboard/` | KPIs, gráficos, exportação |
+| **Shop** | Preferências | `/v2/preferences` | Loja dentro do WhatsApp |
+| | Catálogo | `/v2/catalog` | Produtos |
+| **Conversas** | Atendimentos | `/messaging/` | Inbox do agente |
+| | Mensagens Agendadas | `/schedulemessages/` | Fila de envios futuros |
+| | Chat Interno | `/v2/internalchat/` | Comunicação entre agentes |
+| **Campanhas** | — | `/campaigns/` | Disparo em massa |
+| **Fluxos** | — | `/flows/` | Editor visual de fluxos |
+| **Habilidades** | Perfil | `/v2/profile/` | Persona do bot + config da IA |
+| | Endereço | `/abilities/address/` | Endereço da empresa |
+| | Horários | `/v2/operating-schedules` | Funcionamento / atendimento / feriados |
+| | Pesquisa de Satisfação | `/abilities/satisfactionsurvey/` | CSAT |
+| | Encerramento automático | `/abilities/inactivitytime/` | Timeout por inatividade |
+| | Arquivar Atendimento | `/abilities/archive-attendance/` | Regras de arquivamento |
+| | Regras de atendimentos | `/abilities/attendancedistribution/` | Distribuição e limites |
+| **Configurações** | Geral | `/settings/general/` | Tela com 7 abas internas (ver 6.x) |
+| | Modelos de Mensagem | `/settings/templates/` | Templates WhatsApp (HSM) |
+| | Meu plano | `/v2/invoices` | Plano, consumo, faturas |
+| | Integrações | `/settings/integrations` | RD Station, Meta CAPI |
+
+> A rota `/settings/general/` concentra **7 abas** sem rota própria (estado em memória, não refletido na URL): Geral · Canais · Usuários · Departamentos · Filtros · Motivos do Atendimento · Atendimentos · Tags. **No novo projeto, dar rota própria a cada aba** — permite deep link, back do navegador e permissionamento por rota.
+
+---
+
+## 4. Editor de Fluxos (núcleo do produto)
+
+### 4.1 Estrutura de um Fluxo
+
+Cada fluxo (`ID: cb103485397`, ex.: "Identificação") tem:
+
+| Bloco | Descrição |
+|---|---|
+| **Nome** | Editável, exibido no card do canvas |
+| **Gatilhos** | Condições que iniciam o fluxo (contador exibido: "0 gatilho") |
+| **Suri Shop Assistant** | Liga/desliga a IA generativa **por fluxo** |
+| **Ações** | Sequência de nós executados ao iniciar o fluxo |
+| **Resgate** | Fluxo alternativo disparado quando o contato **não segue o fluxo corretamente** |
+| **Duplicar / Excluir** | Clonagem de fluxo |
+
+### 4.2 Tipos de nó (palette "Adicionar")
+
+| Nó | Função |
+|---|---|
+| `TEXTO` | Mensagem de texto simples |
+| `LISTA` | WhatsApp List Message |
+| `BOTÕES` | Quick reply buttons |
+| `MÍDIA` | Imagem, vídeo, documento, áudio |
+| `TRANSFERIR` | Transbordo para departamento/agente |
+| `CONDIÇÃO` | Branching lógico |
+| `CAPTURA` | Coleta e persiste variável do contato |
+| `FLUXO` | Chama outro fluxo (composição/sub-rotina) |
+| `SHOP` | Injeta catálogo/carrinho na conversa |
+
+São **9 nós na palette**. O bloco de IA (`Suri Shop Assistant`) aparece como um 10º tipo no canvas, mas **não é adicionado pela palette** — é uma configuração de nível de fluxo (item 4.3) que se materializa como card. No Anexo B ele aparece como `ia_assistente` para completar o enum de persistência.
+
+### 4.3 Configuração da IA por fluxo (`Suri Shop Assistant`)
+
+| Campo | Valor observado |
+|---|---|
+| Habilitar assistente no fluxo atual | ✅ |
+| Limitar número de respostas | ☐ (com campo numérico quando marcado) |
+| **Fluxo de saída** | `Falar com atendente` — para onde vai após terminar a interação com a IA |
+| **Base de conhecimento** | `Todos os arquivos` (ou seleção de arquivos específicos) |
+| Forçar uso da base de conhecimento | ☐ |
+| Habilitar limite de respostas adaptável | ☐ |
+| **Instruções (system prompt)** | Texto livre por fluxo |
+
+Trecho das instruções em produção:
+> "Não repasse informações redundantes ao contato (como telefone ou dados que ele já está utilizando para conversar). Seu papel é conduzir o atendimento de forma útil e eficiente..."
+
+**Insight arquitetural importante:** a IA não é global — é **um nó opcional dentro de cada fluxo**, com escopo próprio de base de conhecimento e prompt, e com um *fluxo de saída determinístico*. Isso mantém previsibilidade sem abrir mão da IA. Vale replicar.
+
+### 4.4 Inventário de fluxos da conta UNISULMA
+
+**Fluxos de sistema / genéricos**
+
+| Fluxo | Nós |
+|---|---|
+| Bem-vindas (×2) | Gatilho + Texto + Ir para fluxo |
+| Não entendi (×2) | Gatilho + Suri Shop Assistant |
+| Falar com atendente | Gatilho + Suri Shop Assistant + Texto ("Em que podemos ajudar hoje?") |
+| Falar com protocolo | Gatilho + Transferir |
+| Falar com setores | Gatilho + Opções (menu) |
+| Identificação | Gatilho + Suri Shop Assistant |
+| Resgate com IA | Gatilho + Suri Shop Assistant |
+| Clínicas-Escola | Gatilho + Suri Shop Assistant + Responder com Suri Shop + Transferir |
+
+**Fluxos de e-commerce (módulo Shop)**
+
+Todos com estrutura `Gatilho → ...`:
+Recuperação de Pedidos Externos · Necessita de Ajuda · Logística Manual · Pedido Abandonado · Pedido Cancelado · Pedido Recebido · Pedido Finalizado · Ruptura de pedido
+
+**Fluxos de roteamento por departamento** (folhas do menu "Falar com setores"), todos `Texto → Transferir`:
+Coordenação de Cursos · Secretaria Acadêmica · Financeiro · FIES/PROUNI · Direção Acadêmica · Biblioteca · NCJ
+
+### 4.5 Topologia
+
+Árvore com **nó raiz único** (nome do tenant) → fluxos de primeiro nível → menu "Falar com setores" → folhas de transferência. O canvas suporta pan por arraste, zoom (+/−), fit-to-screen e minimapa.
+
+---
+
+## 5. Modelo de dados proposto
+
+### 5.1 Entidades núcleo
+
+```
+tenants (chatbots)
+├── id, nome, token_api, endpoint, webhook_url, webhook_events[]
+├── plano_id, volumetria_contratada, desconto_volumetria, preco_excedente
+│
+├── canais            (tipo: whatsapp|webchat|instagram|facebook,
+│                      nome, provedor, status, credenciais)
+├── departamentos     (id, nome, is_default)
+├── usuarios          (nome, email, whatsapp, funcao: gerente|agente,
+│                      status: ativo|inativo, presenca: online|ausente|offline,
+│                      mensagem_ausencia)
+├── usuario_departamento  (N:N)
+├── tags              (id, nome, cor_hex, created_at)
+├── motivos_atendimento   (id, nome)
+├── filtros           (id, nome, criterios_json)
+├── horarios          (id, nome, tipo: semanal_recorrente|feriado,
+│                      departamento_id NULL = global, janelas_json)
+│
+├── fluxos            (id, nome, gatilhos_json, ia_config_json,
+│                      resgate_fluxo_id, posicao_x, posicao_y)
+├── fluxo_nos         (fluxo_id, ordem, tipo, payload_json, proximo_no_id)
+│
+├── templates_mensagem (id_externo_meta, canal_id, nome, corpo,
+│                       categoria: marketing|utilidade|autenticacao,
+│                       assunto, status: aprovada|pendente|rejeitada)
+│
+├── contatos          (telefone, nome, canal_id, primeiro_contato_at,
+│                      variaveis_capturadas_json)
+├── contato_tags      (N:N)
+│
+├── atendimentos      (contato_id, departamento_id, agente_id,
+│                      status: esperando|em_atendimento|finalizado|automatico,
+│                      motivo_id, arquivado, criado_at, iniciado_at,
+│                      finalizado_at, tme, tma, tmr)
+├── mensagens         (atendimento_id, direcao, tipo, conteudo,
+│                      status: enviada|entregue|lida|erro, timestamp)
+│
+├── campanhas         (nome, template_id, criado_por, agendado_para, status)
+├── campanha_contatos (campanha_id, contato_id, status, erro)
+├── mensagens_agendadas (contato_id, template_id, quando, agendado_por, status)
+│
+├── base_conhecimento_arquivos (nome, url_blob, indexado_em, embeddings_ref)
+└── pesquisas_satisfacao (atendimento_id, agente_id, nota 1-5, observacao, data)
+```
+
+### 5.2 Métricas derivadas (calcular, não armazenar cru)
+
+| Sigla | Significado | Fórmula |
+|---|---|---|
+| **TME** | Tempo Médio de Espera | `avg(iniciado_at − criado_at)` |
+| **TMA** | Tempo Médio de Atendimento | `avg(finalizado_at − iniciado_at)` |
+| **TMR** | Tempo Médio de Resposta | `avg(intervalo entre msg do contato e resposta do agente)` |
+
+---
+
+## 6. Configurações do tenant
+
+### 6.1 Aba Geral
+
+| Campo | Tipo | Observado |
+|---|---|---|
+| Identificador | readonly | `cb101849497` |
+| Nome | text | `UNISULMA` |
+| Token | readonly (UUID v4) | *(redigido)* |
+| Endpoint | readonly | `https://cb101849497.api.suri.ai/` |
+| Webhook | url | vazio |
+| Eventos do webhook | checkboxes | ver abaixo |
+
+**Catálogo de eventos de webhook** (✅ = ativos na conta):
+
+| Evento | Status | Quando dispara |
+|---|---|---|
+| `new-contact` | ✅ | Contato novo entra |
+| `change-queue` | ✅ | Muda de fila/departamento |
+| `finish-attendance` | ✅ | Atendimento encerrado |
+| `message-received` | ✅ | Mensagem recebida do contato |
+| `message-sent` | ☐ | Mensagem enviada |
+| `message-send-error` | ☐ | Falha no envio |
+| `message-read` | ☐ | Contato leu |
+| `message-delivered` | ☐ | Entregue ao dispositivo |
+
+### 6.2 Aba Canais
+
+| Tipo | Nome | Provedor | Status |
+|---|---|---|---|
+| WhatsApp | Unisulma | Suri | Conectado |
+| WebChat | Webchat | Chatbot Maker | Conectado |
+
+### 6.3 Aba Usuários
+
+Colunas: Nome · Email · Função (`Gerente` / `Agente`) · Departamentos (N:N) · Status (`Ativo`).
+Filtros: busca textual, por departamento, por acesso à plataforma.
+Contadores de presença em tempo real: **Online / Offline / Ausente**.
+Ação: `Convidar novo membro` (fluxo de convite por email).
+
+### 6.4 Aba Departamentos
+
+21 departamentos, um marcado como **Departamento padrão** (`Comercial`). Colunas: ID · Nome · badge de padrão · excluir.
+
+### 6.5 Aba Motivos do Atendimento
+
+Categorização no encerramento: `Atendimento solucionado`, `Falta de comunicação`.
+
+### 6.6 Aba Atendimentos (SLA visual)
+
+Dois indicadores configuráveis com 3 faixas cada (valor + unidade `minutos|horas|dias`):
+
+| Indicador | Atenção leve | Atenção | Crítico |
+|---|---|---|---|
+| Tempo de espera **na fila** | 10 min | 1 hora | 1 dia |
+| Tempo de espera **em atendimento** | 10 min | 1 hora | 1 dia |
+
+### 6.7 Aba Tags
+
+Tags com **cor hexadecimal customizada** e data de criação. Na conta, espelham os departamentos (Ambulatório de Enfermagem, Biblioteca, Clínica de Estética, …) — usadas para etiquetar conversas na inbox.
+
+---
+
+## 7. Habilidades (regras de negócio configuráveis)
+
+### 7.1 Perfil da IA (`/v2/profile/`)
+
+| Campo | Valores |
+|---|---|
+| Gênero da empresa | Neutro / Feminino / Masculino |
+| Nome da empresa | texto |
+| Gênero do assistente | Neutro / Feminino / Masculino |
+| Nome do assistente virtual | texto (vazio na conta) |
+| Habilitar assistente | toggle global (fluxo automático + atendimento + Shop) |
+
+**Estilos de tom de voz pré-definidos** (escolha única, cada um com descrição + exemplo):
+
+1. Formal e Institucional
+2. **Leve e Profissional** ← selecionado
+3. Educacional e Profissional
+4. Descontraído e Jovial
+5. Motivacional e Inspirador
+6. Técnico e Detalhista
+
+> Excelente padrão de UX: em vez de pedir um system prompt ao usuário leigo, oferece 6 presets nomeados com exemplo concreto de saída. **Replicar.**
+
+### 7.2 Endereço (`/abilities/address/`)
+
+Endereço físico da empresa, consumido pelo bot para responder "onde vocês ficam?" e para o módulo Shop (frete/retirada). Campo simples de cadastro único por tenant.
+
+### 7.3 Horários (`/v2/operating-schedules`)
+
+Três abas: **Horários** · **Atendimento e funcionamento** · **Feriados**.
+Horários são nomeados e tipados (`Semanal recorrente`), podendo ser **globais ou por departamento**:
+
+- Horário de funcionamento (global)
+- Horário de atendimento (global)
+- Horário de atendimento — Direção Acadêmica / ANP / Estágio / TCC
+- Horário de atendimento — FIES / PROUNI
+- Horário de atendimento — Financeiro
+- Horário de atendimento — NCJ
+
+### 7.4 Pesquisa de Satisfação
+
+| Campo | Valor |
+|---|---|
+| Ativar pesquisa | Sim |
+| Número de tentativas | 1 |
+| Ação após resposta incorreta | `Transbordar para departamento do atendimento` |
+| Configuração por departamento | override individual |
+
+Escala observada nas respostas: **1 a 5**, com campo opcional de observações.
+
+### 7.5 Encerramento automático
+
+| Campo | Valor |
+|---|---|
+| Ativar | Sim |
+| Avisar cliente antes de encerrar | Não |
+| Tempo de inatividade | 3 dias |
+| Motivo aplicado ao encerrar | `Falta de comunicação` |
+| Override por departamento | disponível |
+
+### 7.6 Arquivar Atendimento
+
+| Campo | Valor |
+|---|---|
+| Agentes podem arquivar ao transferir | Não |
+| Arquivar automaticamente ao encerrar | Sim |
+| Departamentos isentos | multiselect |
+
+### 7.7 Regras de atendimentos (distribuição)
+
+- **Distribuição por departamento**: colunas `Somente online` · `Redistribuir atendimentos` · `Exceções`
+- **Limite de atendimentos por agente**, por departamento (ex.: Ambulatório de Enfermagem = 10)
+- **Visibilidade de dados sensíveis**: `Esconder a conversa antes de iniciar atendimento` · `Esconder número de telefone e email`
+- Regra fixa: **agentes com status "Ausente" são excluídos da distribuição**
+
+---
+
+## 8. Inbox do agente (`/messaging/`)
+
+Layout de 3 colunas: **lista de conversas** · **thread** · **painel de detalhes do contato**.
+
+**Abas da fila** com contadores em badge:
+
+| Aba | Contador observado |
+|---|---|
+| Esperando | 7 |
+| Atendimentos | 12 |
+| Automático | 483 |
+
+**Item da lista de conversa exibe:**
+- Avatar + ícone do canal sobreposto (WhatsApp/WebChat)
+- Nome do contato
+- **Tag de departamento** colorida
+- Timestamp relativo (`sexta 13:54`, `Ontem 15:04`, `09:01`)
+- **Badge de SLA** com semáforo (`Há 4d` vermelho, `Há 19h` laranja, `Há 1h` laranja) — aplicação direta da config 6.6
+- Contador de mensagens não lidas
+
+**Recursos do topo:** busca por nome/telefone/tag · filtro avançado · exportar · nova conversa · **"Ver Painel em tempo real"** (modo supervisor).
+
+---
+
+## 9. Campanhas (`/campaigns/`)
+
+Colunas da listagem:
+`Nome · Status · Criado por · Data · Contatos · Enviados · Entregues · Lidos · Respondidas · Erros · Falhas de processamento`
+
+**Estados:** `Finalizado` · `Cancelado` · `Esperando` (com botões inline ▶ executar e ✕ cancelar)
+
+**Padrão observado:** campanhas recorrentes criadas semanalmente com nome + data, incluindo lotes já agendados para datas futuras em estado `Esperando` (ex.: `Parceiro Sebrae 24/08/2026` e `31/08/2026`, ambos criados antecipadamente).
+
+**Funil real de um lote de 100 contatos:** 100 enviados → ~80 entregues → ~40 lidos → ~4 respostas, com **15 a 21 erros absolutos por lote** (≈15–21% sobre os enviados) e 1–2 falhas de processamento.
+
+> **Sugestão para o novo projeto:** o portal atual não tem recorrência nativa — o usuário cria manualmente uma campanha por semana. Implementar **campanha recorrente com cron** é uma melhoria óbvia e de alto valor.
+
+---
+
+## 10. Templates de mensagem (`/settings/templates/`)
+
+Renderizados em **grid de cards**, cada um com: título, assunto, canal, identificador Meta (numérico, ex.: `1654572555809679`), corpo, badge de status (`Aprovada`) e ação de excluir.
+Filtros: por Canal e por Assunto.
+
+Templates observados: promoções com opções numeradas (`1º SIM, QUERO MUITO / 2º NO MOMENTO, NÃO`), mensagens motivacionais semanais datadas, e templates transacionais (`Suri - Continuar atendimento`, `Mensagem Final – Sem retorno`).
+
+---
+
+## 11. Dashboard — especificação completa das métricas
+
+Filtros globais: **Canal** (Todos / por canal) · **Início** · **Fim** · botões `Exportar` e `Atualizar`.
+
+### Aba CONVERSAS
+`Contatos` · `Ativas` · `Marketing` · `Utilidade` · `Autenticação`
+Gráficos: *Contatos por dia*, *Ativos por dia* (área, com download individual por card).
+
+Definições oficiais (tooltips do produto):
+- **Contatos:** número de telefone ou perfil único que iniciou atendimento
+- **Ativas:** soma de Marketing + Utilidade + Autenticação enviadas **e confirmadas como entregues**
+- As três subcategorias seguem o modelo de cobrança da Meta
+
+### Aba ATENDIMENTOS
+Cards de destaque: `Esperando atendimento` · `Em atendimento`
+Cards secundários: `Contatos atendidos` · `Atendimento finalizado` · `Tempo de espera` · `Tempo de atendimento`
+
+Tabelas:
+1. **Atendimentos por departamento** — Esperando · Em atendimento · Solicitados · Iniciados · Finalizados · TME · TMA · TMR (+ linhas sintéticas `Sem Departamento` e `Departamento excluído`)
+2. **Atendimentos por agente** — Agente · Departamento (com `+N` quando multi) · Esperando · Em atendimento · Finalizados · TME · TMA · TMR (+ `Sem Agente`, `Agente excluído`)
+3. **Atendimentos por motivo** e **Tempo de atendimento por motivo**
+4. **Resultado da pesquisa de satisfação por agente** — média + quantidade
+5. **Resultado da pesquisa por departamento** — média + quantidade
+6. **Respostas à pesquisa de satisfação** — Data · Contato · Telefone · Agente · Nota · Observações
+
+> Note as linhas sintéticas `Departamento excluído` / `Agente excluído`: o sistema usa **soft delete** e preserva atendimentos históricos órfãos. Decisão correta — replicar.
+
+### Aba MARKETING
+`Click to WhatsApp` · `Pedidos criados` (qtd + R$) · `Pedidos pagos` (qtd + R$) · `Conversão %`
+Gráfico *Click to WhatsApp por dia* e tabela **por anúncio**: Anúncio · Criativo · Contatos · Pedidos criados · Pedidos pagos · Receita.
+
+### Exportação de Atendimentos (modal)
+Campos: Início · Fim · Tipo (`Finalizados` / `Finalizados e atuais`) · Canal · Departamento (multiselect com "Todos os departamentos") · Atendente · Formato (**.CSV** ou **.XLSX**).
+
+---
+
+## 12. Integrações e billing
+
+**Integrações nativas:** RD Station Marketing · Conversion API Meta (CAPI)
+**Shop — provedores suportados:** Suri Shop · VTEX · Lexos · Mercadapp · Keonode · Shopify
+
+**Meu plano (`/v2/invoices`):**
+- *Plano contratado:* Plano · Volumetria · Parceiro · Desconto de volumetria · Mensalidade · Preço do excedente
+- *Consumo* (seletor de período mensal): Período · Contatos · Mensagem de Marketing · Utilidade · Autenticação
+- *Fatura:* Mensalidade + excedentes. Faturamento externo (Conta Azul), faturas emitidas dia 02.
+
+**Limite de sessões:** o portal exibe aviso quando a conta atinge o limite de sessões de conversas — há **throttling por volumetria contratada**, não apenas cobrança de excedente.
+
+---
+
+## 13. Stack recomendada para o novo projeto
+
+Considerando perfil PHP/JavaScript/DevOps:
+
+| Camada | Recomendação | Por quê |
+|---|---|---|
+| **API** | Laravel 11 (PHP 8.3) + Sanctum | Ecossistema maduro para multi-tenancy, filas e agendamento |
+| **Multi-tenancy** | `stancl/tenancy` — banco por tenant ou schema por tenant | Isolamento de dados de conversas é requisito de LGPD |
+| **Realtime** | Laravel Reverb ou Soketi (WebSocket) | Inbox precisa de push; polling não escala às ~500 conversas ativas observadas |
+| **Filas** | Redis + Horizon | Disparo de campanhas, webhooks, retry de envio |
+| **Agendamento** | Laravel Scheduler | Mensagens agendadas, encerramento por inatividade, campanhas recorrentes |
+| **Front do portal** | Vue 3 + Pinia + Vite | Produtividade e curva menor que Angular |
+| **Editor de fluxos** | **Vue Flow** (ou React Flow) | Entrega pan/zoom/minimapa/conectores prontos — é o maior risco de escopo do projeto |
+| **Banco** | PostgreSQL 16 + particionamento de `mensagens` por mês | Volume de mensagens cresce rápido; partição salva o histórico |
+| **Busca** | Meilisearch | Busca por nome/telefone/tag na inbox |
+| **IA / RAG** | pgvector no próprio Postgres + API de LLM | Evita mais um serviço na stack |
+| **Mídia** | S3 / MinIO / Azure Blob | Igual ao original |
+| **WhatsApp** | WhatsApp Cloud API oficial (Meta) | Único caminho sustentável; BSP se precisar de faturamento agregado |
+| **Deploy** | Docker + GitHub Actions; k8s só se multi-região | Simplicidade primeiro |
+
+---
+
+## 14. Roadmap sugerido de implementação
+
+| Fase | Escopo | Entregável |
+|---|---|---|
+| **1 — Fundação** | Multi-tenancy, auth, usuários, funções, departamentos, tags, motivos | Painel administrativo funcional |
+| **2 — Canal** | Integração WhatsApp Cloud API, webhook receiver, persistência de contatos e mensagens | Mensagens entram e saem |
+| **3 — Inbox** | 3 colunas, filas (Esperando/Atendimentos/Automático), transferência, encerramento, WebSocket | Atendimento humano operacional |
+| **4 — Regras** | Distribuição, limites por agente, horários, encerramento automático, arquivamento, SLA visual | Operação escalável |
+| **5 — Fluxos** | Editor visual, 9 tipos de nó, gatilhos, fluxo de resgate, motor de execução | Chatbot funcionando |
+| **6 — Templates e Campanhas** | Sincronização de templates Meta, disparo em massa, agendamento, **recorrência (melhoria)** | Marketing ativo |
+| **7 — IA** | Base de conhecimento, RAG com pgvector, presets de tom de voz, config por fluxo | Diferencial competitivo |
+| **8 — Analytics** | Dashboard com 3 abas, TME/TMA/TMR, CSAT, exportação CSV/XLSX | Gestão por dados |
+| **9 — Billing** | Planos, volumetria, medição de consumo, excedentes, faturas | Monetização |
+
+**Caminho crítico:** fases 2 e 5. O motor de execução de fluxos (máquina de estados persistida por conversa, resiliente a reinício e com timeout) é a peça mais subestimada — orce-a generosamente.
+
+---
+
+## 15. Melhorias identificadas sobre o produto original
+
+| # | Lacuna observada | Proposta |
+|---|---|---|
+| 1 | Campanhas sem recorrência nativa (usuário recria semanalmente) | Cron + template de campanha recorrente |
+| 2 | Token de API exposto em texto plano na tela de configurações | Máscara + "revelar" com reautenticação + rotação self-service |
+| 3 | Namespace de ID global e opaco (`cbXXXXXXXXX` para tudo) | UUID v7 por tabela + slug legível |
+| 4 | Canvas de fluxos sem busca/agrupamento — 25 fluxos já ficam ilegíveis | Busca por nome, pastas/grupos, colapsar ramos |
+| 5 | ~15–21% dos envios de campanha falham, sem detalhamento na listagem | Drill-down por contato com o motivo do erro da Meta |
+| 6 | Filas com nomenclatura pouco óbvia ("Automático" = bot) | Rótulos explícitos e tooltip |
+| 7 | Sem versionamento/histórico de fluxos | Versionar fluxos com rollback e diff |
+| 8 | Sem ambiente de teste de fluxo | Simulador de conversa antes de publicar |
+
+---
+
+## Anexo A — Departamentos (referência de seed)
+
+| ID original | Nome |
+|---|---|
+| cb102907178 | Ambulatório de Enfermagem |
+| cb102907055 | Biblioteca |
+| cb102907222 | Clínica de Estética |
+| cb102907260 | Clínica de Fisioterapia e Nutrição |
+| cb102907290 | Clínica de Psicologia |
+| cb149653115 | Clinica Escola de Fisioterapia |
+| cb102907086 | Comercial *(padrão)* |
+| cb147137349 | Coordenação da Pós-Graduação Lato Sensu (Especializações) |
+| cb102907134 | Coordenação de Cursos |
+| cb147137164 | Coordenação de Inovação, Pesquisa e Pós-Graduação Stricto Sensu |
+| cb102907325 | Direção Acadêmica / ANP / Estágio / TCC |
+| cb113423001 | Enade |
+| cb102907526 | FIES / PROUNI |
+| cb102907492 | Financeiro |
+| cb102907561 | NCJ - Núcleo de Ciências Jurídicas |
+| cb134908741 | Ouvidoria |
+| cb126091901 | Parceiros Sebrae |
+| cb102907623 | Protocolo |
+| cb125198633 | READMISSÃO |
+| cb102907598 | Secretaria Acadêmica |
+| cb109419304 | Tecnologia da Informação |
+
+## Anexo B — Enums
+
+```
+canal.tipo          = whatsapp | webchat | instagram | facebook
+usuario.funcao      = gerente | agente
+usuario.presenca    = online | ausente | offline
+atendimento.status  = esperando | em_atendimento | automatico | finalizado
+mensagem.status     = enviada | entregue | lida | erro
+template.categoria  = marketing | utilidade | autenticacao
+template.status     = aprovada | pendente | rejeitada
+campanha.status     = esperando | em_execucao | finalizado | cancelado
+horario.tipo        = semanal_recorrente | feriado
+sla.faixa           = atencao_leve | atencao | critico
+no_fluxo.tipo       = texto | lista | botoes | midia | transferir
+                    | condicao | captura | fluxo | shop | ia_assistente
+webhook.evento      = new-contact | change-queue | finish-attendance
+                    | message-received | message-sent | message-send-error
+                    | message-read | message-delivered
+```
+
+---
+
+*Documento gerado a partir de inspeção direta da interface e do tráfego do portal. Dados pessoais de contatos (nomes e telefones presentes nos relatórios) foram deliberadamente omitidos; o token de API da conta também não foi transcrito.*
+
+*Contém identificadores de infraestrutura do tenant UNISULMA (chatbot ID, endpoint, IDs de departamento, ID de template Meta). Não são segredos, mas tratar o documento como interno.*

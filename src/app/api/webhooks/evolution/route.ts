@@ -7,13 +7,12 @@
 
 import { NextResponse } from "next/server";
 import { prisma, LeadStatus } from "@/lib/prisma";
-import { evolutionSendText, evolutionSendTextHumanized, evolutionSendMedia, evolutionGetProfilePicture, evolutionGetMediaBase64 } from "@/lib/evolution";
-import { readFile } from "fs/promises";
-import path from "path";
+import { evolutionSendText, evolutionSendTextHumanized, evolutionGetProfilePicture, evolutionGetMediaBase64 } from "@/lib/evolution";
 import { transcribeAudio, describeImage } from "@/lib/media";
 import { saveMedia } from "@/lib/media-storage";
 import { generateAIResponse, shouldTransferToHuman, detectLeadStatus, generateConversationSummary } from "@/lib/ai";
 import { updateLeadScore, getStatusFromScore } from "@/lib/lead-score";
+import { PROTECTED_FUNNEL_STATUSES, funnelIndex } from "@/lib/lead-funnel";
 import {
   collectWebhookMessages,
   parseIncomingMessage,
@@ -33,6 +32,11 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+
+    console.log("[Evolution webhook] HIT", {
+      event: payload?.event,
+      instance: payload?.instance,
+    });
 
     const knownInstance = payload?.instance
       ? await prisma.instance.findFirst({
@@ -139,9 +143,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, action: "ignored", event: eventName });
     }
 
+    const skipBot = payload?.sulmaSkipBot === true;
     let lastAction: Record<string, unknown> = { ok: true };
     for (const item of items) {
-      lastAction = await ingestWhatsAppMessage(item, payload?.instance);
+      lastAction = await ingestWhatsAppMessage(item, payload?.instance, skipBot);
     }
     return NextResponse.json(lastAction);
   } catch (error) {
@@ -155,7 +160,8 @@ export async function POST(req: Request) {
 
 async function ingestWhatsAppMessage(
   item: Record<string, unknown>,
-  instanceName: string | undefined
+  instanceName: string | undefined,
+  skipBot = false
 ): Promise<Record<string, unknown>> {
   try {
     const parsed = parseIncomingMessage(item);
@@ -345,6 +351,10 @@ async function ingestWhatsAppMessage(
         .catch(() => {});
     }
 
+    if (skipBot) {
+      return { ok: true, action: "synced" };
+    }
+
     // Mensagem enviada pelo atendente (fromMe): humano assumiu a conversa — bot não responde até "Devolver ao Bot"
     if (fromMe) {
       const wasBot = lead.ownerType === "bot";
@@ -461,7 +471,6 @@ async function ingestWhatsAppMessage(
       select: { direction: true, body: true },
     });
 
-    // Gera resposta humanizada com IA (Sulma - Amo Vidas)
     const { response: botResponse, extractedData } = await generateAIResponse(text ?? "", {
       leadId: lead.id,
       organizationId: lead.organizationId,
@@ -472,68 +481,8 @@ async function ingestWhatsAppMessage(
       leadStatus: lead.status,
       messageHistory,
     });
-    
-    // Cards dos planos disponíveis para envio automático
-    const PLAN_CARDS: { keywords: string[]; file: string; caption: string }[] = [
-      { keywords: ["plano rotina", "rotina", "r$ 37", "37,90", "37,00"], file: "exame_plano_ rotina.jpeg", caption: "Plano Rotina - Amo Vidas" },
-      { keywords: ["plano especializado", "especializado", "r$ 57", "57,90"], file: "exame_plano_ especializado.jpeg", caption: "Plano Especializado - Amo Vidas" },
-      { keywords: ["cobertura total", "r$ 97", "97,90"], file: "exame_plano_ cobertura_ total.jpeg", caption: "Plano Cobertura Total - Amo Vidas" },
-      { keywords: ["check-up", "checkup", "check up"], file: "checkups.jpeg", caption: "Check-ups - Amo Vidas" },
-      { keywords: ["especialidade", "especialidades"], file: "especialidades_dentro_dos_palnos.jpeg", caption: "Especialidades - Amo Vidas" },
-      { keywords: ["dependente", "dependentes", "familiar"], file: "planos_e_seu_dependentes.jpeg", caption: "Planos e Dependentes - Amo Vidas" },
-    ];
 
     try {
-      // Verifica se é a primeira resposta do bot (nenhuma mensagem "out" anterior)
-      const previousBotMessages = await prisma.message.count({
-        where: { conversationId: conversation.id, direction: "out" },
-      });
-
-      const isFirstBotResponse = previousBotMessages === 0;
-
-      // Na primeira resposta, envia card dos 3 planos ANTES do texto
-      // Exceção: se o lead perguntou sobre um plano específico
-      if (isFirstBotResponse) {
-        const inputLower = (text ?? "").toLowerCase();
-        const mentionedSpecificPlan =
-          inputLower.includes("rotina") ||
-          inputLower.includes("especializado") ||
-          inputLower.includes("cobertura total");
-
-        if (!mentionedSpecificPlan) {
-          try {
-            const planosPath = path.join(process.cwd(), "public", "cards", "planos.jpeg");
-            const planosBuffer = await readFile(planosPath);
-            const planosBase64 = planosBuffer.toString("base64");
-
-            await evolutionSendMedia({
-              number: phone,
-              mediatype: "image",
-              media: planosBase64,
-              mimetype: "image/jpeg",
-              caption: "Conheça nossos planos - Amo Vidas Clube de Saúde 💖",
-              fileName: "planos.jpeg",
-              instanceName: instance?.instanceName,
-              instanceToken: instance?.token || undefined,
-            });
-
-            await prisma.message.create({
-              data: {
-                conversationId: conversation.id,
-                direction: "out",
-                type: "image",
-                body: "[Imagem enviada: Planos Amo Vidas]",
-                sentAt: new Date(),
-              },
-            });
-
-            console.log("[Bot] Card dos 3 planos enviado (primeira resposta)");
-          } catch (planosErr) {
-            console.error("[Bot] Erro ao enviar card dos planos:", planosErr);
-          }
-        }
-      }
-
       // Envia mensagem de forma humanizada (com "digitando" e pausas)
       await evolutionSendTextHumanized({
         number: phone,
@@ -553,45 +502,6 @@ async function ingestWhatsAppMessage(
         },
       });
 
-      // Detecta se a resposta menciona planos e envia o card correspondente
-      const responseLower = botResponse.toLowerCase();
-      const cardsToSend = PLAN_CARDS.filter((card) =>
-        card.keywords.some((kw) => responseLower.includes(kw))
-      ).slice(0, 2); // Máximo 2 cards por resposta
-
-      for (const card of cardsToSend) {
-        try {
-          const filePath = path.join(process.cwd(), "public", "cards", card.file);
-          const fileBuffer = await readFile(filePath);
-          const base64 = fileBuffer.toString("base64");
-
-          await evolutionSendMedia({
-            number: phone,
-            mediatype: "image",
-            media: base64,
-            mimetype: "image/jpeg",
-            caption: card.caption,
-            fileName: card.file,
-            instanceName: instance?.instanceName,
-            instanceToken: instance?.token || undefined,
-          });
-
-          await prisma.message.create({
-            data: {
-              conversationId: conversation.id,
-              direction: "out",
-              type: "image",
-              body: `[Imagem enviada: ${card.caption}]`,
-              sentAt: new Date(),
-            },
-          });
-
-          console.log(`[Bot] Card enviado: ${card.caption}`);
-        } catch (cardErr) {
-          console.error(`[Bot] Erro ao enviar card ${card.file}:`, cardErr);
-        }
-      }
-
       await prisma.conversation.update({
         where: { id: conversation.id },
         data: { lastMessageAt: new Date(), unreadCount: 0 },
@@ -601,7 +511,7 @@ async function ingestWhatsAppMessage(
       const scoreBreakdown = await updateLeadScore(lead.id, messageHistory, text ?? "");
       console.log(`Lead ${lead.id} score: ${scoreBreakdown.total}/1000 (P:${scoreBreakdown.perfil} N:${scoreBreakdown.necessidade} C:${scoreBreakdown.consciencia} B:${scoreBreakdown.comportamento} D:${scoreBreakdown.decisao})`);
 
-      // Detecta status por keywords (prioridade: PERDIDO > FECHADO > etc.)
+      // Detecta status por keywords (prioridade: PERDIDO > matrícula > etc.)
       const detectedStatus = detectLeadStatus(
         messageHistory,
         text ?? "",
@@ -612,13 +522,9 @@ async function ingestWhatsAppMessage(
       let newStatus: string | null = detectedStatus;
       if (!newStatus) {
         const scoreStatus = getStatusFromScore(scoreBreakdown.total);
-        // Só avança pelo score (não regride), e não sobrescreve status manuais/especiais
-        const protectedStatuses = ["FECHADO", "PERDIDO", "HUMANO_SOLICITADO", "HUMANO_EM_ATENDIMENTO", "AGUARDANDO_RESPOSTA", "LEAD_FRIO"];
-        if (!protectedStatuses.includes(lead.status) && scoreStatus !== lead.status) {
-          // Score só avança: NOVO → EM_ATENDIMENTO → CONSCIENTIZADO → QUALIFICADO → EM_NEGOCIACAO
-          const statusOrder = ["NOVO", "EM_ATENDIMENTO", "CONSCIENTIZADO", "QUALIFICADO", "EM_NEGOCIACAO", "HUMANO_SOLICITADO"];
-          const currentIdx = statusOrder.indexOf(lead.status);
-          const newIdx = statusOrder.indexOf(scoreStatus);
+        if (!PROTECTED_FUNNEL_STATUSES.includes(lead.status) && scoreStatus !== lead.status) {
+          const currentIdx = funnelIndex(lead.status);
+          const newIdx = funnelIndex(scoreStatus);
           if (newIdx > currentIdx) {
             newStatus = scoreStatus;
           }

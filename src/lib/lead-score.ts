@@ -199,18 +199,18 @@ export function calculateLeadScore(
 /**
  * Retorna o status do Kanban sugerido com base no score.
  * Mapeamento conforme documento Ficha do Lead Ideal:
- *  0–199   → EM_ATENDIMENTO
- *  200–399 → CONSCIENTIZADO
- *  400–599 → QUALIFICADO
- *  600–799 → EM_NEGOCIACAO
- *  800+    → HUMANO_SOLICITADO (handoff)
+ *  0–199   → ENTENDER
+ *  200–399 → ORIENTAR
+ *  400–599 → QUALIFICAR
+ *  600–799 → REGISTRAR
+ *  800+    → CONDUZIR_MATRICULA
  */
 export function getStatusFromScore(score: number): string {
-  if (score >= 800) return "HUMANO_SOLICITADO";
-  if (score >= 600) return "EM_NEGOCIACAO";
-  if (score >= 400) return "QUALIFICADO";
-  if (score >= 200) return "CONSCIENTIZADO";
-  return "EM_ATENDIMENTO";
+  if (score >= 800) return "CONDUZIR_MATRICULA";
+  if (score >= 600) return "REGISTRAR";
+  if (score >= 400) return "QUALIFICAR";
+  if (score >= 200) return "ORIENTAR";
+  return "ENTENDER";
 }
 
 /**

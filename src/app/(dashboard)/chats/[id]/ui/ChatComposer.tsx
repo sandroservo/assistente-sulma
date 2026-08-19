@@ -58,6 +58,7 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
   const [savedContacts, setSavedContacts] = useState<Array<{ id: string; name: string; phone: string; organization?: string }>>([]);
   const [contactSearch, setContactSearch] = useState("");
   const [sendingContact, setSendingContact] = useState(false);
+  const [infoCards, setInfoCards] = useState<Array<{ id: string; title: string; imageUrl: string }>>([]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -112,7 +113,7 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
 
   function triggerRefetch() {
     if (typeof window !== "undefined" && (window as any).__inboxRefetch) {
-      setTimeout(() => (window as any).__inboxRefetch(), 300);
+      (window as any).__inboxRefetch();
     }
   }
 
@@ -145,6 +146,21 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
       return;
     }
 
+    const outgoing = text.trim();
+    const quotedId = replyingTo?.id;
+    const tmpId = `tmp-${Date.now()}`;
+    (window as any).__inboxAddOptimistic?.({
+      id: tmpId,
+      body: outgoing,
+      type: "text",
+      direction: "out",
+      createdAt: new Date().toISOString(),
+      status: "pending",
+      quotedMessageId: quotedId || null,
+    });
+    setText("");
+    setReplyingTo(null);
+    requestAnimationFrame(() => textareaRef.current?.focus());
     setLoading(true);
     try {
       const res = await fetch("/api/messages/send", {
@@ -152,22 +168,23 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversationId,
-          text,
-          quotedMessageId: replyingTo?.id || undefined,
+          text: outgoing,
+          quotedMessageId: quotedId || undefined,
         }),
       });
 
       if (!res.ok) {
+        (window as any).__inboxRemoveOptimistic?.(tmpId);
+        setText(outgoing);
         const data = await res.json().catch(() => ({}));
         onToast?.(data.error ?? "Erro ao enviar mensagem", "error");
         return;
       }
 
-      setText("");
-      setReplyingTo(null);
       triggerRefetch();
-      requestAnimationFrame(() => textareaRef.current?.focus());
     } catch (error) {
+      (window as any).__inboxRemoveOptimistic?.(tmpId);
+      setText(outgoing);
       console.error("Erro ao enviar:", error);
       onToast?.("Erro ao enviar mensagem", "error");
     } finally {
@@ -354,22 +371,20 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
     }
   }
 
-  // Cards informativos disponíveis em public/cards/
-  const availableCards = [
-    { file: "planos.jpeg", label: "Planos" },
-    { file: "planos_e_seu_dependentes.jpeg", label: "Planos e Dependentes" },
-    { file: "checkups.jpeg", label: "Check-ups" },
-    { file: "especialidades_dentro_dos_palnos.jpeg", label: "Especialidades" },
-    { file: "exame_plano_ cobertura_ total.jpeg", label: "Exames - Cobertura Total" },
-    { file: "exame_plano_ especializado.jpeg", label: "Exames - Especializado" },
-    { file: "exame_plano_ rotina.jpeg", label: "Exames - Rotina" },
-  ];
+  useEffect(() => {
+    fetch("/api/info-cards")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok && Array.isArray(d.cards)) setInfoCards(d.cards);
+      })
+      .catch(() => {});
+  }, []);
 
-  async function sendCard(card: { file: string; label: string }) {
+  async function sendCard(card: { title: string; imageUrl: string }) {
     setSendingCard(true);
     setShowCardsGallery(false);
     try {
-      const response = await fetch(`/cards/${card.file}`);
+      const response = await fetch(card.imageUrl);
       const blob = await response.blob();
       const reader = new FileReader();
       const base64 = await new Promise<string>((resolve, reject) => {
@@ -384,9 +399,9 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
         body: JSON.stringify({
           conversationId,
           base64,
-          mimeType: "image/jpeg",
-          fileName: card.file,
-          caption: card.label,
+          mimeType: blob.type || "image/jpeg",
+          fileName: `${card.title}.jpg`,
+          caption: card.title,
         }),
       });
 
@@ -676,20 +691,25 @@ export default function ChatComposer({ conversationId, onToast }: ChatComposerPr
               </button>
             </div>
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-              {availableCards.map((card) => (
+              {infoCards.length === 0 && (
+                <p className="col-span-full text-xs text-gray-400 text-center py-3">
+                  Nenhum card cadastrado. Vá em Cards Informativos no menu.
+                </p>
+              )}
+              {infoCards.map((card) => (
                 <button
-                  key={card.file}
+                  key={card.id}
                   onClick={() => sendCard(card)}
                   disabled={sendingCard}
                   className="group relative rounded-lg overflow-hidden border hover:border-[#F9A825] transition-all hover:shadow-md disabled:opacity-50"
                 >
                   <img
-                    src={`/cards/${card.file}`}
-                    alt={card.label}
+                    src={card.imageUrl}
+                    alt={card.title}
                     className="w-full h-16 object-cover"
                   />
                   <div className="absolute inset-0 bg-black/40 flex items-end p-1">
-                    <span className="text-white text-[9px] font-medium leading-tight">{card.label}</span>
+                    <span className="text-white text-[9px] font-medium leading-tight">{card.title}</span>
                   </div>
                 </button>
               ))}

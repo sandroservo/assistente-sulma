@@ -18,6 +18,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { leadStatusLabel } from "@/lib/lead-funnel";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import HandoffButton from "./HandoffButton";
@@ -62,21 +63,7 @@ function getScoreLabel(score: number) {
 }
 
 function getStatusLabel(status: string): string {
-  const map: Record<string, string> = {
-    NOVO: "Novo",
-    EM_ATENDIMENTO: "Em Atendimento",
-    CONSCIENTIZADO: "Conscientizado",
-    QUALIFICADO: "Qualificado",
-    LEAD_FRIO: "Lead Frio",
-    PROPOSTA_ENVIADA: "Proposta Enviada",
-    EM_NEGOCIACAO: "Em Negociação",
-    AGUARDANDO_RESPOSTA: "Aguardando Resposta",
-    FECHADO: "Fechado",
-    PERDIDO: "Perdido",
-    HUMANO_SOLICITADO: "Aguardando Humano",
-    HUMANO_EM_ATENDIMENTO: "Humano Atendendo",
-  };
-  return map[status] || status;
+  return leadStatusLabel(status);
 }
 
 function getInitials(name: string | null, phone: string): string {

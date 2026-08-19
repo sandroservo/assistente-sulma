@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { LEAD_STATUS_LABELS, normalizeLeadStatus } from "@/lib/lead-funnel";
 
 interface Tag {
   id: string;
@@ -90,20 +91,7 @@ function getInitials(name: string, phone: string): string {
   return phone.slice(-2);
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  NOVO: "Novo",
-  EM_ATENDIMENTO: "Em Atendimento",
-  CONSCIENTIZADO: "Conscientizado",
-  QUALIFICADO: "Qualificado",
-  LEAD_FRIO: "Lead Frio",
-  PROPOSTA_ENVIADA: "Proposta",
-  EM_NEGOCIACAO: "Negociação",
-  AGUARDANDO_RESPOSTA: "Aguardando",
-  FECHADO: "Fechado",
-  PERDIDO: "Perdido",
-  HUMANO_SOLICITADO: "Humano Solicitado",
-  HUMANO_EM_ATENDIMENTO: "Humano",
-};
+const STATUS_LABELS = LEAD_STATUS_LABELS;
 
 export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
   const router = useRouter();
@@ -154,7 +142,10 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
       !search ||
       (c.name || "").toLowerCase().includes(search.toLowerCase()) ||
       c.phone.includes(search);
-    const matchStatus = filterStatus === "todos" || c.status === filterStatus;
+    const matchStatus =
+      filterStatus === "todos" ||
+      c.status === filterStatus ||
+      normalizeLeadStatus(c.status) === filterStatus;
     const matchCategory = filterCategory === "todos" || c.category === filterCategory;
     return matchSearch && matchStatus && matchCategory;
   });

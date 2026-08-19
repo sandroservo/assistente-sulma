@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { MessageSquare, Users, Clock, TrendingUp } from "lucide-react";
 import { DashboardChart } from "@/components/DashboardChart";
+import { CHART_STATUS_COLORS, LEAD_STATUS_COLORS, leadStatusLabel, normalizeLeadStatus } from "@/lib/lead-funnel";
 
 export const dynamic = "force-dynamic";
 
@@ -15,24 +16,22 @@ function getStatusBadge(status: string, ownerType: string) {
   if (ownerType === "human") {
     return { label: "Humano", className: "bg-indigo-100 text-indigo-700" };
   }
-  const statusMap: Record<string, { label: string; className: string }> = {
-    NOVO: { label: "Novo", className: "bg-[#E8EDF8] text-[#001A5E]" },
-    EM_ATENDIMENTO: { label: "Lead", className: "bg-violet-100 text-violet-700" },
-    QUALIFICADO: { label: "Qualificado", className: "bg-green-100 text-green-700" },
-    PROPOSTA_ENVIADA: { label: "Proposta", className: "bg-purple-100 text-purple-700" },
-    FECHADO: { label: "Fechado", className: "bg-emerald-100 text-emerald-700" },
-    HUMANO_SOLICITADO: { label: "Aguardando", className: "bg-orange-100 text-orange-700" },
-    HUMANO_EM_ATENDIMENTO: { label: "Humano", className: "bg-indigo-100 text-indigo-700" },
+  return {
+    label: leadStatusLabel(status),
+    className: LEAD_STATUS_COLORS[status] || "bg-gray-100 text-gray-700",
   };
-  return statusMap[status] || { label: status, className: "bg-gray-100 text-gray-700" };
 }
 
 function getStatusSubtitle(status: string, ownerType: string): string {
   if (ownerType === "human") return "Atendimento humano";
-  if (status === "NOVO") return "Aguardando atendimento";
-  if (status === "EM_ATENDIMENTO") return "Em atendimento";
-  if (status === "QUALIFICADO") return "Qualificado";
-  if (status === "HUMANO_SOLICITADO") return "Aguardando atendente";
+  const normalized = normalizeLeadStatus(status);
+  if (normalized === "NOVO") return "Primeiro contato";
+  if (normalized === "ENTENDER") return "Entendendo a necessidade";
+  if (normalized === "ORIENTAR") return "Orientando sobre cursos";
+  if (normalized === "QUALIFICAR") return "Qualificando o perfil";
+  if (normalized === "REGISTRAR") return "Registrando a inscrição";
+  if (normalized === "CONDUZIR_MATRICULA") return "Conduzindo para matrícula";
+  if (normalized === "PERDIDO") return "Lead perdido";
   return "Em atendimento";
 }
 
@@ -93,21 +92,8 @@ export default async function DashboardPage() {
     };
   });
 
-  const statusLabels: Record<string, { label: string; color: string }> = {
-    NOVO: { label: "Novo", color: "#F472B6" },
-    EM_ATENDIMENTO: { label: "Atendimento", color: "#A78BFA" },
-    CONSCIENTIZADO: { label: "Conscient.", color: "#60A5FA" },
-    QUALIFICADO: { label: "Qualificado", color: "#34D399" },
-    EM_NEGOCIACAO: { label: "Negociação", color: "#FBBF24" },
-    PROPOSTA_ENVIADA: { label: "Proposta", color: "#C084FC" },
-    FECHADO: { label: "Fechado", color: "#10B981" },
-    HUMANO_SOLICITADO: { label: "Humano", color: "#FB923C" },
-    HUMANO_EM_ATENDIMENTO: { label: "Hum. Atend.", color: "#818CF8" },
-    PERDIDO: { label: "Perdido", color: "#9CA3AF" },
-  };
-
   const statusData = leadsByStatus.map(r => {
-    const info = statusLabels[r.status] || { label: r.status, color: "#9CA3AF" };
+    const info = CHART_STATUS_COLORS[r.status] || CHART_STATUS_COLORS[normalizeLeadStatus(r.status)] || { label: leadStatusLabel(r.status), color: "#9CA3AF" };
     return {
       status: r.status,
       label: info.label,
