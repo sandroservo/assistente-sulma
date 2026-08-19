@@ -9,7 +9,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
-import { evolutionSendText, evolutionSendMedia, evolutionSendPresence } from "@/lib/evolution";
+import { evolutionSendText, evolutionSendMedia } from "@/lib/evolution";
 import {
   pickRandomInstance,
   computeDelay,
@@ -25,7 +25,7 @@ import {
   prepareMassOutbound,
   revertMassOutbound,
 } from "@/lib/mass-inbox";
-import type { Campaign } from "@prisma/client";
+import type { Campaign, CampaignStatus } from "@prisma/client";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,26 +70,53 @@ async function resolveTargets(campaign: Campaign): Promise<Array<{ phone: string
   return leads;
 }
 
+export type CampaignTarget = { phone: string; name: string | null };
+
+export type RunCampaignOpts = {
+  /** Se informado, dispara só nesta lista (Contatos / planilha). Senão usa o filtro da campanha. */
+  contacts?: CampaignTarget[];
+  /** Disparo avulso: não mexe em agendamento/recorrência da campanha. */
+  skipSchedule?: boolean;
+};
+
 /**
  * Executa uma campanha inteira (bloqueante, com delays anti-bloqueio).
  * Cria um CampaignRun, envia contato a contato e agenda a próxima ocorrência.
- * Retorna o resumo do run.
  */
-export async function runCampaign(campaignId: string) {
+export async function runCampaign(campaignId: string, opts: RunCampaignOpts = {}) {
+  const prepared = await prepareCampaignRun(campaignId, opts);
+  return executeCampaignRun(prepared.runId, {
+    skipSchedule: opts.skipSchedule,
+    previousStatus: prepared.previousStatus,
+  });
+}
+
+/**
+ * Cria o run (status RUNNING, contatos pending) e devolve o id para o painel
+ * acompanhar em background.
+ */
+export async function prepareCampaignRun(campaignId: string, opts: RunCampaignOpts = {}) {
   const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
   if (!campaign) throw new Error("Campanha não encontrada");
   if (campaign.status === "RUNNING") throw new Error("Campanha já está em execução");
 
-  const profile = safeProfile(campaign.profile);
-  const targets = await resolveTargets(campaign);
+  const rawTargets = opts.contacts?.length ? opts.contacts : await resolveTargets(campaign);
+  const seen = new Set<string>();
+  const targets: CampaignTarget[] = [];
+  for (const t of rawTargets) {
+    const phone = (t.phone || "").replace(/\D/g, "");
+    if (phone.length < 10) continue;
+    const key = phone.slice(-8);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ phone, name: t.name || null });
+  }
+  if (!targets.length) throw new Error("Nenhum destinatário válido para disparar");
 
-  const where = {
-    organizationId: campaign.organizationId,
-    status: "CONNECTED" as const,
-    ...(campaign.instanceIds.length ? { id: { in: campaign.instanceIds } } : {}),
-  };
-
-  await prisma.campaign.update({ where: { id: campaignId }, data: { status: "RUNNING" } });
+  await prisma.campaign.update({
+    where: { id: campaignId },
+    data: { status: "RUNNING" },
+  });
 
   const run = await prisma.campaignRun.create({
     data: {
@@ -100,46 +127,159 @@ export async function runCampaign(campaignId: string) {
         create: targets.map((t) => ({ phone: t.phone, name: t.name })),
       },
     },
-    include: { contacts: true },
   });
 
-  let sent = 0;
-  let failed = 0;
-  let sharedMediaUrl: string | null = null;
-  if (campaign.mediaBase64) {
-    try {
-      sharedMediaUrl = await saveMedia(
-        campaign.mediaBase64,
-        campaign.mediaMimeType || "image/jpeg"
-      );
-    } catch (e) {
-      console.error("[Campaign] falha ao salvar mídia no inbox:", e);
-    }
-  }
+  return { runId: run.id, campaignId, total: targets.length, previousStatus: campaign.status };
+}
 
-  for (let i = 0; i < run.contacts.length; i++) {
-    const c = run.contacts[i];
+export async function executeCampaignRun(
+  runId: string,
+  opts: { skipSchedule?: boolean; previousStatus?: string } = {}
+) {
+  const run = await prisma.campaignRun.findUnique({
+    where: { id: runId },
+    include: { contacts: true, campaign: true },
+  });
+  if (!run) throw new Error("Execução não encontrada");
+  const campaign = run.campaign;
+  const previousStatus = opts.previousStatus || "DONE";
+  const profile = safeProfile(campaign.profile);
+
+  const where = {
+    organizationId: campaign.organizationId,
+    status: "CONNECTED" as const,
+    ...(campaign.instanceIds.length ? { id: { in: campaign.instanceIds } } : {}),
+  };
+
+  const restoreCampaign = async () => {
+    if (opts.skipSchedule) {
+      await prisma.campaign.update({
+        where: { id: campaign.id },
+        data: {
+          lastRunAt: new Date(),
+          status: (["DRAFT", "SCHEDULED", "DONE", "CANCELLED"].includes(previousStatus)
+            ? previousStatus
+            : "DONE") as CampaignStatus,
+        },
+      });
+      return;
+    }
+    const next = nextSchedule(new Date(), campaign.recurrence);
+    await prisma.campaign.update({
+      where: { id: campaign.id },
+      data: {
+        lastRunAt: new Date(),
+        scheduledAt: next,
+        status: next ? "SCHEDULED" : "DONE",
+      },
+    });
+  };
+
+  try {
+    let sharedMediaUrl: string | null = null;
+    if (campaign.mediaBase64) {
+      try {
+        sharedMediaUrl = await saveMedia(
+          campaign.mediaBase64,
+          campaign.mediaMimeType || "image/jpeg"
+        );
+      } catch (e) {
+        console.error("[Campaign] falha ao salvar mídia no inbox:", e);
+      }
+    }
+
+    const pool0 = await prisma.instance.findMany({ where });
+    const concurrency = Math.max(1, Math.min(pool0.length || 1, 4));
+    const buckets: (typeof run.contacts)[] = Array.from({ length: concurrency }, () => []);
+    run.contacts.forEach((c, i) => buckets[i % concurrency].push(c));
+
+    await Promise.all(
+      buckets.map((bucket, bucketIndex) =>
+        sendBucket({
+          bucket,
+          bucketIndex,
+          campaign,
+          runId: run.id,
+          profile,
+          where,
+          sharedMediaUrl,
+          skipExtraDelay: Boolean(opts.skipSchedule),
+        })
+      )
+    );
+
+    const fresh = await prisma.campaignRun.findUnique({ where: { id: run.id } });
+    await prisma.campaignRun.update({
+      where: { id: run.id },
+      data: { status: "DONE", finishedAt: new Date() },
+    });
+    await restoreCampaign();
+
+    return {
+      runId: run.id,
+      total: run.contacts.length,
+      sent: fresh?.sent ?? 0,
+      failed: fresh?.failed ?? 0,
+    };
+  } catch (err) {
+    await prisma.campaignContact.updateMany({
+      where: { runId: run.id, status: { in: ["pending", "sending"] } },
+      data: { status: "failed", errorKind: "transient", errorMsg: "Execução interrompida" },
+    });
+    await prisma.campaignRun.update({
+      where: { id: run.id },
+      data: { status: "DONE", finishedAt: new Date() },
+    });
+    await restoreCampaign().catch(() => undefined);
+    throw err;
+  }
+}
+
+async function sendBucket({
+  bucket,
+  bucketIndex,
+  campaign,
+  runId,
+  profile,
+  where,
+  sharedMediaUrl,
+  skipExtraDelay,
+}: {
+  bucket: Array<{ id: string; phone: string; name: string | null }>;
+  bucketIndex: number;
+  campaign: Campaign;
+  runId: string;
+  profile: AntiBlockProfile;
+  where: { organizationId: string; status: "CONNECTED"; id?: { in: string[] } };
+  sharedMediaUrl: string | null;
+  skipExtraDelay: boolean;
+}) {
+  for (let i = 0; i < bucket.length; i++) {
+    const c = bucket[i];
     let pool = await prisma.instance.findMany({ where });
     let picked = pickRandomInstance(pool, profile);
 
     if (!picked) {
-      // Todas no limite/pausa — espera uma vez e tenta de novo
-      await sleep(60_000);
+      await sleep(8_000);
       pool = await prisma.instance.findMany({ where });
       picked = pickRandomInstance(pool, profile);
     }
 
     if (!picked) {
-      failed++;
       await prisma.campaignContact.update({
         where: { id: c.id },
         data: { status: "failed", errorKind: "transient", errorMsg: "Sem instância disponível (anti-bloqueio)" },
       });
+      await prisma.campaignRun.update({ where: { id: runId }, data: { failed: { increment: 1 } } });
       continue;
     }
 
     let inboxId: string | null = null;
     try {
+      await prisma.campaignContact.update({
+        where: { id: c.id },
+        data: { status: "sending" },
+      });
       const inbox = await prepareMassOutbound({
         organizationId: campaign.organizationId,
         phone: c.phone,
@@ -151,12 +291,6 @@ export async function runCampaign(campaignId: string) {
         sourceLabel: campaign.name,
       });
       inboxId = inbox.messageId;
-
-      await evolutionSendPresence(c.phone, "composing", {
-        instanceName: picked.instanceName,
-        token: picked.token || undefined,
-      }).catch(() => {});
-      await sleep(800 + Math.random() * 1800);
 
       let result: unknown;
       if (campaign.mediaBase64) {
@@ -181,44 +315,24 @@ export async function runCampaign(campaignId: string) {
       const providerId = extractEvolutionMessageId(result);
       await confirmMassOutbound(inboxId, providerId);
       await recordSendSuccess(picked.id);
-      sent++;
       await prisma.campaignContact.update({
         where: { id: c.id },
         data: { status: "sent", providerId, sentAt: new Date() },
       });
+      await prisma.campaignRun.update({ where: { id: runId }, data: { sent: { increment: 1 } } });
     } catch (error) {
       if (inboxId) await revertMassOutbound(inboxId);
-      failed++;
       const errMsg = error instanceof Error ? error.message : "Erro desconhecido";
       await recordSendFailure(picked.id, errMsg);
       await prisma.campaignContact.update({
         where: { id: c.id },
         data: { status: "failed", errorKind: classifySendError(errMsg), errorMsg: errMsg.slice(0, 500) },
       });
+      await prisma.campaignRun.update({ where: { id: runId }, data: { failed: { increment: 1 } } });
     }
 
-    await prisma.campaignRun.update({ where: { id: run.id }, data: { sent, failed } });
-
-    if (i < run.contacts.length - 1) {
-      await sleep(computeDelay(i, profile));
+    if (i < bucket.length - 1) {
+      await sleep(computeDelay(bucketIndex * bucket.length + i, profile, { skipExtra: skipExtraDelay }));
     }
   }
-
-  await prisma.campaignRun.update({
-    where: { id: run.id },
-    data: { status: "DONE", finishedAt: new Date() },
-  });
-
-  // Recorrência: reagenda ou encerra
-  const next = nextSchedule(new Date(), campaign.recurrence);
-  await prisma.campaign.update({
-    where: { id: campaignId },
-    data: {
-      lastRunAt: new Date(),
-      scheduledAt: next,
-      status: next ? "SCHEDULED" : "DONE",
-    },
-  });
-
-  return { runId: run.id, total: run.contacts.length, sent, failed, next };
 }

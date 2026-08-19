@@ -2,8 +2,7 @@
  * Autor: Sandro Servo
  * Site: https://cloudservo.com.br
  *
- * Componente cliente: lista de contatos com seleção múltipla
- * e disparo em massa via SSE com delay aleatório.
+ * Lista de contatos com seleção e disparo em massa em segundo plano.
  */
 
 "use client";
@@ -15,14 +14,9 @@ import {
   Search,
   X,
   Send,
-  Image as ImageIcon,
   Loader2,
-  CheckCircle2,
-  XCircle,
-  Clock,
   Users,
   Radio,
-  Trash2,
   Plus,
   UserPlus,
   FileSpreadsheet,
@@ -32,6 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LEAD_STATUS_LABELS, normalizeLeadStatus } from "@/lib/lead-funnel";
+import { saveActiveRunId } from "./BroadcastDock";
 
 interface Tag {
   id: string;
@@ -50,26 +45,6 @@ interface Contact {
   tags: Tag[];
   lastMessageAt: string | null;
 }
-
-interface BroadcastLog {
-  contact: string;
-  status: "ok" | "error" | "waiting";
-  message?: string;
-  instance?: string;
-  leadName?: string;
-  contactName?: string;
-  phone?: string;
-  conversationId?: string;
-}
-
-type BroadcastProfile = "conservative" | "balanced" | "aggressive";
-
-type BroadcastInstance = {
-  id: string;
-  name: string;
-  status: string;
-  health?: { ok: boolean; reason?: string };
-};
 
 interface ContactsPageClientProps {
   contacts: Contact[];
@@ -125,34 +100,26 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
   } | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
-  // Broadcast state
+  // Disparo em background
   const [showBroadcast, setShowBroadcast] = useState(false);
-  const [broadcastMessage, setBroadcastMessage] = useState("");
-  const [broadcastImage, setBroadcastImage] = useState<string | null>(null);
-  const [broadcastImageName, setBroadcastImageName] = useState<string | null>(null);
-  const [broadcastImageMime, setBroadcastImageMime] = useState<string>("image/jpeg");
-  const [isSending, setIsSending] = useState(false);
-  const [broadcastLogs, setBroadcastLogs] = useState<BroadcastLog[]>([]);
-  const [broadcastProgress, setBroadcastProgress] = useState({ sent: 0, failed: 0, total: 0 });
-  const [broadcastDone, setBroadcastDone] = useState(false);
-  const [broadcastInstances, setBroadcastInstances] = useState<BroadcastInstance[]>([]);
-  const [broadcastInstanceIds, setBroadcastInstanceIds] = useState<Set<string>>(new Set());
-  const [broadcastProfile, setBroadcastProfile] = useState<BroadcastProfile>("balanced");
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const [campaigns, setCampaigns] = useState<Array<{ id: string; name: string; message: string; status: string }>>([]);
+  const [campaignId, setCampaignId] = useState("");
+  const [recipientSource, setRecipientSource] = useState<"selected" | "sheet">("selected");
+  const [sheetFile, setSheetFile] = useState<File | null>(null);
+  const [startingBroadcast, setStartingBroadcast] = useState(false);
+  const [broadcastError, setBroadcastError] = useState<string | null>(null);
+  const sheetInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!showBroadcast) return;
-    fetch("/api/instances")
+    fetch("/api/campaigns")
       .then((r) => r.json())
       .then((data) => {
-        const list = (data.instances || []) as BroadcastInstance[];
-        setBroadcastInstances(list);
-        const connected = list.filter((i) => i.status === "CONNECTED").map((i) => i.id);
-        setBroadcastInstanceIds(new Set(connected));
+        const list = (data.campaigns || []) as Array<{ id: string; name: string; message: string; status: string }>;
+        setCampaigns(list);
+        setCampaignId((prev) => prev || list[0]?.id || "");
       })
-      .catch(() => setBroadcastInstances([]));
+      .catch(() => setCampaigns([]));
   }, [showBroadcast]);
 
   // Filtro
@@ -191,139 +158,51 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
     }
   };
 
-  // Imagem
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setBroadcastImageName(file.name);
-    setBroadcastImageMime(file.type || "image/jpeg");
-
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      // Remove o prefixo data:image/...;base64,
-      setBroadcastImage(result.split(",")[1]);
-    };
-    reader.readAsDataURL(file);
-    e.target.value = "";
-  };
-
-  const clearImage = () => {
-    setBroadcastImage(null);
-    setBroadcastImageName(null);
-  };
-
-  // Broadcast via SSE
   const startBroadcast = useCallback(async () => {
-    const selected = contacts.filter((c) => selectedIds.has(c.id));
-    if (!selected.length || !broadcastMessage.trim()) return;
+    setBroadcastError(null);
+    if (!campaignId) {
+      setBroadcastError("Escolha uma campanha.");
+      return;
+    }
+    if (recipientSource === "selected" && selectedIds.size === 0) {
+      setBroadcastError("Selecione os contatos na lista ou importe uma planilha.");
+      return;
+    }
+    if (recipientSource === "sheet" && !sheetFile) {
+      setBroadcastError("Selecione a planilha com os leads.");
+      return;
+    }
 
-    setIsSending(true);
-    setBroadcastDone(false);
-    setBroadcastLogs([]);
-    setBroadcastProgress({ sent: 0, failed: 0, total: selected.length });
-
+    setStartingBroadcast(true);
     try {
-      const res = await fetch("/api/broadcast", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contacts: selected.map((c) => ({
-            phone: c.phone,
-            name: c.name || c.phone,
-          })),
-          message: broadcastMessage,
-          imageBase64: broadcastImage || undefined,
-          imageMimeType: broadcastImageMime || undefined,
-          instanceIds: [...broadcastInstanceIds],
-          profile: broadcastProfile,
-        }),
-      });
-
-      if (!res.ok || !res.body) {
-        const data = await res.json().catch(() => ({}));
-        setBroadcastLogs((prev) => [
-          ...prev,
-          { contact: "Sistema", status: "error", message: data.error || "Erro ao iniciar disparo" },
-        ]);
-        setIsSending(false);
+      const body = new FormData();
+      body.append("campaignId", campaignId);
+      body.append("source", recipientSource);
+      if (recipientSource === "sheet" && sheetFile) {
+        body.append("file", sheetFile);
+      } else {
+        const selected = contacts.filter((c) => selectedIds.has(c.id));
+        body.append(
+          "contacts",
+          JSON.stringify(selected.map((c) => ({ phone: c.phone, name: c.name || c.phone })))
+        );
+      }
+      const res = await fetch("/api/broadcast", { method: "POST", body });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBroadcastError(data.error || "Não foi possível iniciar o disparo.");
         return;
       }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const data = JSON.parse(line.replace("data: ", ""));
-
-            if (data.type === "progress") {
-              setBroadcastProgress({
-                sent: data.sent,
-                failed: data.failed,
-                total: data.total,
-              });
-              setBroadcastLogs((prev) => [
-                ...prev,
-                {
-                  contact: data.contact,
-                  status: data.status,
-                  message: data.error,
-                  instance: data.instance,
-                  leadName: data.leadName,
-                  contactName: data.contactName,
-                  phone: data.phone,
-                  conversationId: data.conversationId,
-                },
-              ]);
-            } else if (data.type === "waiting") {
-              setBroadcastLogs((prev) => [
-                ...prev,
-                {
-                  contact: "⏳",
-                  status: "waiting",
-                  message: data.message,
-                },
-              ]);
-            } else if (data.type === "done") {
-              setBroadcastProgress({
-                sent: data.sent,
-                failed: data.failed,
-                total: data.total,
-              });
-              setBroadcastDone(true);
-            }
-
-            // Auto-scroll logs
-            setTimeout(() => {
-              logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-            }, 50);
-          } catch {
-            // Ignore parse errors
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Broadcast error:", error);
-      setBroadcastLogs((prev) => [
-        ...prev,
-        { contact: "Sistema", status: "error", message: "Conexão perdida" },
-      ]);
+      saveActiveRunId(data.runId);
+      setShowBroadcast(false);
+      setSheetFile(null);
+      setBroadcastError(null);
+    } catch {
+      setBroadcastError("Erro de conexão ao iniciar o disparo.");
     } finally {
-      setIsSending(false);
+      setStartingBroadcast(false);
     }
-  }, [contacts, selectedIds, broadcastMessage, broadcastImage, broadcastImageMime, broadcastInstanceIds, broadcastProfile]);
+  }, [campaignId, recipientSource, sheetFile, selectedIds, contacts]);
 
   const handleSaveContact = useCallback(async () => {
     setSaveError(null);
@@ -397,13 +276,8 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
 
   const resetBroadcast = () => {
     setShowBroadcast(false);
-    setBroadcastMessage("");
-    setBroadcastImage(null);
-    setBroadcastImageName(null);
-    setBroadcastLogs([]);
-    setBroadcastProgress({ sent: 0, failed: 0, total: 0 });
-    setBroadcastDone(false);
-    setSelectedIds(new Set());
+    setBroadcastError(null);
+    setSheetFile(null);
   };
 
   return (
@@ -440,19 +314,17 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
             Novo Contato
           </Button>
 
-          {selectedIds.size > 0 && (
-            <Button
-              onClick={() => {
-                setShowBroadcast(true);
-                setBroadcastDone(false);
-                setBroadcastLogs([]);
-              }}
-              className="bg-[#001A5E] hover:bg-[#003080] text-white"
-            >
-              <Radio className="w-4 h-4 mr-2" />
-              Disparo em Massa ({selectedIds.size})
-            </Button>
-          )}
+          <Button
+            onClick={() => {
+              setShowBroadcast(true);
+              setBroadcastError(null);
+              setRecipientSource(selectedIds.size > 0 ? "selected" : "sheet");
+            }}
+            className="bg-[#001A5E] hover:bg-[#003080] text-white"
+          >
+            <Radio className="w-4 h-4 mr-2" />
+            Disparo em Massa{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
+          </Button>
         </div>
       </div>
 
@@ -813,11 +685,10 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
         </div>
       )}
 
-      {/* Modal de Broadcast */}
+      {/* Modal: só para escolher campanha e destinatários — o envio roda fora */}
       {showBroadcast && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
-            {/* Header modal */}
+          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col shadow-2xl">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#001A5E] to-[#003080] flex items-center justify-center">
@@ -825,267 +696,114 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-gray-800">Disparo em Massa</h2>
-                  <p className="text-xs text-gray-500">
-                    {selectedIds.size} contatos selecionados | Intervalos dinâmicos
-                  </p>
+                  <p className="text-xs text-gray-500">Escolha a campanha e os destinatários. O envio segue em segundo plano.</p>
                 </div>
               </div>
-              <button
-                onClick={resetBroadcast}
-                disabled={isSending}
-                className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 disabled:opacity-50"
-              >
+              <button onClick={resetBroadcast} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600" aria-label="Fechar">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
-              {/* Composer */}
-              {!isSending && !broadcastDone && (
-                <>
-                  <div>
-                    <label htmlFor="broadcast-msg" className="block text-sm font-medium text-gray-700 mb-1">
-                      Mensagem
-                    </label>
-                    <textarea
-                      id="broadcast-msg"
-                      value={broadcastMessage}
-                      onChange={(e) => setBroadcastMessage(e.target.value)}
-                      placeholder="Digite a mensagem que será enviada para todos os contatos selecionados..."
-                      rows={5}
-                      className="w-full px-4 py-3 border border-gray-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-[#001A5E]/20 focus:border-[#001A5E] text-sm"
-                    />
-                    <p className="text-xs text-gray-400 mt-1">
-                      {broadcastMessage.length} caracteres
-                    </p>
-                  </div>
-
-                  {/* Imagem */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Imagem (opcional)
-                    </label>
-                    {broadcastImage ? (
-                      <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
-                        <ImageIcon className="w-5 h-5 text-[#001A5E] shrink-0" />
-                        <span className="text-sm text-gray-700 flex-1 truncate">
-                          {broadcastImageName}
-                        </span>
-                        <button
-                          onClick={clearImage}
-                          className="p-1 rounded-md hover:bg-gray-200 text-gray-400"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="w-full p-4 border-2 border-dashed border-gray-200 rounded-xl text-sm text-gray-500 hover:border-[#F9A825] hover:text-[#F9A825] transition-colors"
-                      >
-                        <ImageIcon className="w-6 h-6 mx-auto mb-1" />
-                        Clique para anexar uma imagem
-                      </button>
-                    )}
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={handleImageSelect}
-                      className="hidden"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Instâncias (escolha aleatória a cada envio)
-                    </label>
-                    {broadcastInstances.length === 0 ? (
-                      <p className="text-sm text-gray-500">
-                        Nenhuma instância cadastrada.{" "}
-                        <Link href="/settings" className="text-[#001A5E] font-medium hover:underline">
-                          Criar em Configurações → Evolution
-                        </Link>
-                      </p>
-                    ) : (
-                      <div className="space-y-2 max-h-36 overflow-y-auto border border-gray-200 rounded-xl p-3">
-                        {broadcastInstances.map((inst) => {
-                          const connected = inst.status === "CONNECTED";
-                          return (
-                            <label
-                              key={inst.id}
-                              className={cn(
-                                "flex items-center gap-2 text-sm",
-                                !connected && "opacity-50"
-                              )}
-                            >
-                              <input
-                                type="checkbox"
-                                disabled={!connected}
-                                checked={broadcastInstanceIds.has(inst.id)}
-                                onChange={() => {
-                                  setBroadcastInstanceIds((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(inst.id)) next.delete(inst.id);
-                                    else next.add(inst.id);
-                                    return next;
-                                  });
-                                }}
-                                className="rounded border-gray-300"
-                              />
-                              <span className="flex-1">{inst.name}</span>
-                              <span className="text-[11px] text-gray-400">
-                                {connected ? "conectada" : inst.status.toLowerCase()}
-                                {inst.health?.reason ? ` · ${inst.health.reason}` : ""}
-                              </span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  <div>
-                    <label htmlFor="broadcast-profile" className="block text-sm font-medium text-gray-700 mb-1">
-                      Perfil anti-bloqueio
-                    </label>
+              <div>
+                <label htmlFor="broadcast-campaign" className="block text-sm font-medium text-gray-700 mb-1">Campanha</label>
+                {campaigns.length === 0 ? (
+                  <p className="text-sm text-gray-500">
+                    Nenhuma campanha criada.{" "}
+                    <Link href="/campaigns" className="text-[#001A5E] font-medium hover:underline">Criar em Campanhas</Link>
+                  </p>
+                ) : (
+                  <>
                     <select
-                      id="broadcast-profile"
-                      value={broadcastProfile}
-                      onChange={(e) => setBroadcastProfile(e.target.value as BroadcastProfile)}
-                      className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#001A5E]/20 focus:border-[#001A5E]"
+                      id="broadcast-campaign"
+                      value={campaignId}
+                      onChange={(e) => setCampaignId(e.target.value)}
+                      className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#001A5E]/20"
                     >
-                      <option value="conservative">Conservador — mais intervalo, menos volume</option>
-                      <option value="balanced">Equilibrado — recomendado</option>
-                      <option value="aggressive">Ágil — mais volume, mais risco</option>
+                      {campaigns.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
                     </select>
-                  </div>
+                    {campaigns.find((c) => c.id === campaignId)?.message && (
+                      <p className="mt-2 text-xs text-gray-500 line-clamp-3 bg-gray-50 rounded-lg p-2">
+                        {campaigns.find((c) => c.id === campaignId)?.message}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
 
-                  {/* Aviso */}
-                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
-                    <strong>Anti-bloqueio Meta:</strong> cada mensagem sai de uma instância sorteada
-                    (prioriza quem enviou menos). Há aquecimento em números novos, limites por hora/dia
-                    e pausa automática se a Meta recusar. Não feche esta janela durante o disparo.
-                  </div>
-                </>
+              <div>
+                <p className="block text-sm font-medium text-gray-700 mb-2">Destinatários</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRecipientSource("selected")}
+                    className={cn(
+                      "rounded-xl border px-3 py-3 text-left text-sm",
+                      recipientSource === "selected" ? "border-[#001A5E] bg-[#EEF2FF]" : "border-gray-200 hover:bg-gray-50"
+                    )}
+                  >
+                    <span className="font-medium text-gray-800">Contatos selecionados</span>
+                    <span className="block text-xs text-gray-500 mt-0.5">{selectedIds.size} na lista</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRecipientSource("sheet")}
+                    className={cn(
+                      "rounded-xl border px-3 py-3 text-left text-sm",
+                      recipientSource === "sheet" ? "border-[#001A5E] bg-[#EEF2FF]" : "border-gray-200 hover:bg-gray-50"
+                    )}
+                  >
+                    <span className="font-medium text-gray-800">Planilha de leads</span>
+                    <span className="block text-xs text-gray-500 mt-0.5">Importar Excel/CSV só para este disparo</span>
+                  </button>
+                </div>
+              </div>
+
+              {recipientSource === "sheet" && (
+                <div className="space-y-2">
+                  <a href="/api/contacts/import/template" className="inline-flex items-center gap-1.5 text-xs font-medium text-[#001A5E] hover:underline">
+                    <Download className="w-3.5 h-3.5" /> Baixar modelo Excel
+                  </a>
+                  <input
+                    ref={sheetInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={(e) => setSheetFile(e.target.files?.[0] ?? null)}
+                    className="block w-full text-sm text-gray-600 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-[#001A5E] file:text-white"
+                  />
+                  {sheetFile && <p className="text-xs text-gray-500 truncate">{sheetFile.name}</p>}
+                </div>
               )}
 
-              {/* Progresso / Logs */}
-              {(isSending || broadcastDone) && (
-                <div className="space-y-4">
-                  {/* Barra de progresso */}
-                  <div>
-                    <div className="flex justify-between text-sm mb-2">
-                      <span className="text-gray-600">
-                        Progresso: {broadcastProgress.sent + broadcastProgress.failed} / {broadcastProgress.total}
-                      </span>
-                      <span className="text-gray-500">
-                        <span className="text-green-600 font-medium">{broadcastProgress.sent} ok</span>
-                        {broadcastProgress.failed > 0 && (
-                          <> | <span className="text-red-500 font-medium">{broadcastProgress.failed} falha</span></>
-                        )}
-                      </span>
-                    </div>
-                    <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-[#001A5E] to-[#003080] rounded-full transition-all duration-500"
-                        style={{
-                          width: `${broadcastProgress.total > 0
-                            ? ((broadcastProgress.sent + broadcastProgress.failed) / broadcastProgress.total) * 100
-                            : 0}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Ao iniciar, o modal fecha e você pode usar o sistema. O painel no canto mostra quem já recebeu.
+              </p>
 
-                  {/* Logs */}
-                  <div className="bg-gray-50 rounded-xl border border-gray-200 max-h-60 overflow-y-auto">
-                    <div className="p-3 space-y-1.5">
-                      {broadcastLogs.map((log, i) => (
-                        <div key={i} className="flex items-start gap-2 text-xs">
-                          {log.status === "ok" && <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0 mt-0.5" />}
-                          {log.status === "error" && <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />}
-                          {log.status === "waiting" && <Clock className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />}
-                          <div className="min-w-0 flex-1">
-                            {log.status === "waiting" ? (
-                              <span className="text-amber-600">{log.message}</span>
-                            ) : (
-                              <>
-                                <p className={cn(
-                                  "truncate",
-                                  log.status === "ok" && "text-gray-700",
-                                  log.status === "error" && "text-red-600"
-                                )}>
-                                  Lead: {log.leadName || log.contact}
-                                  {" · "}
-                                  Contato: {log.contactName || log.contact}
-                                  {log.phone ? ` (${formatPhone(log.phone)})` : ""}
-                                  {log.instance ? ` · ${log.instance}` : ""}
-                                  {log.message ? ` — ${log.message}` : ""}
-                                </p>
-                                {log.conversationId && log.status === "ok" && (
-                                  <Link href={`/chats/${log.conversationId}`} className="text-[#001A5E] font-medium hover:underline">
-                                    Abrir chat
-                                  </Link>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                      <div ref={logsEndRef} />
-                    </div>
-                  </div>
-
-                  {broadcastDone && (
-                    <div className="p-4 bg-green-50 border border-green-200 rounded-xl text-center">
-                      <CheckCircle2 className="w-8 h-8 text-green-500 mx-auto mb-2" />
-                      <p className="text-sm font-semibold text-green-700">
-                        Disparo finalizado!
-                      </p>
-                      <p className="text-xs text-green-600 mt-1">
-                        {broadcastProgress.sent} enviados com sucesso
-                        {broadcastProgress.failed > 0 && `, ${broadcastProgress.failed} falharam`}
-                      </p>
-                    </div>
-                  )}
-                </div>
+              {broadcastError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">{broadcastError}</div>
               )}
             </div>
 
-            {/* Footer modal */}
             <div className="px-6 py-4 border-t border-gray-100 flex gap-3 justify-end">
-              {!isSending && !broadcastDone && (
-                <>
-                  <Button variant="outline" onClick={resetBroadcast}>
-                    Cancelar
-                  </Button>
-                  <Button
-                    onClick={startBroadcast}
-                    disabled={!broadcastMessage.trim() || broadcastInstanceIds.size === 0}
-                    className="bg-[#001A5E] hover:bg-[#003080] text-white"
-                  >
-                    <Send className="w-4 h-4 mr-2" />
-                    Iniciar Disparo
-                  </Button>
-                </>
-              )}
-              {isSending && (
-                <Button disabled className="bg-gray-200 text-gray-500">
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Enviando...
-                </Button>
-              )}
-              {broadcastDone && (
-                <Button onClick={resetBroadcast} className="bg-[#001A5E] hover:bg-[#003080] text-white">
-                  Fechar
-                </Button>
-              )}
+              <Button variant="outline" onClick={resetBroadcast} disabled={startingBroadcast}>Cancelar</Button>
+              <Button
+                onClick={startBroadcast}
+                disabled={startingBroadcast || !campaignId}
+                className="bg-[#001A5E] hover:bg-[#003080] text-white"
+              >
+                {startingBroadcast ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Iniciando...</>
+                ) : (
+                  <><Send className="w-4 h-4 mr-2" /> Disparar em segundo plano</>
+                )}
+              </Button>
             </div>
           </div>
         </div>
       )}
+
     </div>
   );
 }

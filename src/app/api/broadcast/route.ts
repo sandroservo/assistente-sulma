@@ -1,271 +1,84 @@
 /**
- * Autor: Sandro Servo
- * Site: https://cloudservo.com.br
- *
- * Disparo em massa com rotação aleatória de instâncias e anti-bloqueio Meta.
+ * Inicia disparo em background a partir de uma campanha.
+ * Destinatários: JSON { contacts } ou planilha (multipart).
  */
-
+import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { evolutionSendText, evolutionSendMedia, evolutionSendPresence } from "@/lib/evolution";
-import {
-  pickRandomInstance,
-  computeDelay,
-  recordSendSuccess,
-  recordSendFailure,
-  formatWait,
-  type AntiBlockProfile,
-} from "@/lib/anti-block";
-import { saveMedia } from "@/lib/media-storage";
-import {
-  confirmMassOutbound,
-  extractEvolutionMessageId,
-  prepareMassOutbound,
-  revertMassOutbound,
-} from "@/lib/mass-inbox";
+import { executeCampaignRun, prepareCampaignRun, type CampaignTarget } from "@/lib/campaigns";
+import { normalizeImportPhone, parseContactWorkbook } from "@/lib/contact-import";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 60;
 
-interface BroadcastContact {
-  phone: string;
-  name: string;
-}
-
-interface BroadcastPayload {
-  contacts: BroadcastContact[];
-  message: string;
-  imageBase64?: string;
-  imageMimeType?: string;
-  instanceIds?: string[];
-  profile?: AntiBlockProfile;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function toTargets(list: Array<{ phone?: string; name?: string | null }>): CampaignTarget[] {
+  return list
+    .map((c) => ({
+      phone: normalizeImportPhone(String(c.phone || "")) || "",
+      name: c.name?.trim() || null,
+    }))
+    .filter((c) => c.phone.length >= 12);
 }
 
 export async function POST(req: Request) {
+  const session = await auth();
+  if (!session?.user?.organizationId) {
+    return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  }
+
   try {
-    const session = await auth();
-    if (!session?.user?.organizationId) {
-      return new Response(JSON.stringify({ error: "Não autorizado" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
+    const orgId = session.user.organizationId;
+    const contentType = req.headers.get("content-type") || "";
+    let campaignId = "";
+    let contacts: CampaignTarget[] = [];
 
-    const body: BroadcastPayload = await req.json();
-    const {
-      contacts,
-      message,
-      imageBase64,
-      imageMimeType,
-      instanceIds,
-      profile = "balanced",
-    } = body;
-
-    if (!contacts?.length || !message?.trim()) {
-      return new Response(
-        JSON.stringify({ error: "Contatos e mensagem são obrigatórios" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    const safeProfile: AntiBlockProfile = ["conservative", "balanced", "aggressive"].includes(profile)
-      ? profile
-      : "balanced";
-
-    const where = {
-      organizationId: session.user.organizationId,
-      status: "CONNECTED" as const,
-      ...(instanceIds?.length ? { id: { in: instanceIds } } : {}),
-    };
-
-    let pool = await prisma.instance.findMany({ where });
-    if (!pool.length) {
-      return new Response(
-        JSON.stringify({
-          error: "Nenhuma instância conectada. Crie e conecte WhatsApp em Instâncias.",
-        }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    const shuffled = [...contacts].sort(() => Math.random() - 0.5);
-    const encoder = new TextEncoder();
-    let sharedMediaUrl: string | null = null;
-    if (imageBase64) {
-      try {
-        sharedMediaUrl = await saveMedia(imageBase64, imageMimeType || "image/jpeg");
-      } catch (e) {
-        console.error("[Broadcast] falha ao salvar mídia no inbox:", e);
+    if (contentType.includes("multipart/form-data")) {
+      const form = await req.formData();
+      campaignId = String(form.get("campaignId") || "");
+      const source = String(form.get("source") || "selected");
+      const file = form.get("file");
+      if (source === "sheet" && file instanceof File) {
+        const rows = parseContactWorkbook(Buffer.from(await file.arrayBuffer()));
+        contacts = toTargets(rows.map((r) => ({ phone: r.phone, name: r.name })));
+      } else {
+        const raw = String(form.get("contacts") || "[]");
+        contacts = toTargets(JSON.parse(raw) as Array<{ phone: string; name?: string }>);
       }
+    } else {
+      const body = await req.json().catch(() => ({}));
+      campaignId = String(body.campaignId || "");
+      contacts = toTargets(body.contacts || []);
     }
 
-    const stream = new ReadableStream({
-      async start(controller) {
-        function send(data: Record<string, unknown>) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
-        }
+    if (!campaignId) {
+      return NextResponse.json({ error: "Escolha uma campanha para disparar." }, { status: 400 });
+    }
+    if (!contacts.length) {
+      return NextResponse.json({ error: "Nenhum destinatário válido (nome/telefone)." }, { status: 400 });
+    }
 
-        send({
-          type: "start",
-          total: shuffled.length,
-          instances: pool.length,
-          profile: safeProfile,
-          message: `Disparo para ${shuffled.length} contatos em ${pool.length} instância(s), perfil ${safeProfile}.`,
-        });
-
-        let sent = 0;
-        let failed = 0;
-        let skipped = 0;
-
-        for (let i = 0; i < shuffled.length; i++) {
-          const contact = shuffled[i];
-          pool = await prisma.instance.findMany({ where });
-
-          let picked = pickRandomInstance(pool, safeProfile);
-          if (!picked) {
-            send({
-              type: "waiting",
-              delay: 60_000,
-              message: "Todas as instâncias no limite/pausa. Aguardando 60s...",
-            });
-            await sleep(60_000);
-            pool = await prisma.instance.findMany({ where });
-            picked = pickRandomInstance(pool, safeProfile);
-          }
-
-          if (!picked) {
-            skipped++;
-            send({
-              type: "progress",
-              index: i + 1,
-              total: shuffled.length,
-              sent,
-              failed,
-              skipped,
-              contact: contact.name || contact.phone,
-              status: "error",
-              error: "Sem instância disponível (anti-bloqueio)",
-            });
-            continue;
-          }
-
-          let inboxId: string | null = null;
-          try {
-            const inbox = await prepareMassOutbound({
-              organizationId: session.user.organizationId,
-              phone: contact.phone,
-              name: contact.name,
-              body: message,
-              mediaUrl: sharedMediaUrl,
-              type: sharedMediaUrl ? "image" : "text",
-              source: "broadcast",
-              sourceLabel: "Disparo em massa",
-            });
-            inboxId = inbox.messageId;
-
-            await evolutionSendPresence(contact.phone, "composing", {
-              instanceName: picked.instanceName,
-              token: picked.token || undefined,
-            }).catch(() => {});
-            await sleep(800 + Math.random() * 1800);
-
-            let result: unknown;
-            if (imageBase64) {
-              result = await evolutionSendMedia({
-                number: contact.phone,
-                mediatype: "image",
-                media: imageBase64,
-                mimetype: imageMimeType || "image/jpeg",
-                caption: message,
-                instanceName: picked.instanceName,
-                instanceToken: picked.token || undefined,
-              });
-            } else {
-              result = await evolutionSendText({
-                number: contact.phone,
-                text: message,
-                instanceName: picked.instanceName,
-                instanceToken: picked.token || undefined,
-              });
-            }
-
-            await confirmMassOutbound(inboxId, extractEvolutionMessageId(result));
-            await recordSendSuccess(picked.id);
-            sent++;
-            send({
-              type: "progress",
-              index: i + 1,
-              total: shuffled.length,
-              sent,
-              failed,
-              skipped,
-              contact: contact.name || contact.phone,
-              leadName: inbox.leadName,
-              contactName: inbox.contactName,
-              phone: inbox.phone,
-              conversationId: inbox.conversationId,
-              instance: picked.name,
-              status: "ok",
-            });
-          } catch (error) {
-            if (inboxId) await revertMassOutbound(inboxId);
-            failed++;
-            const errMsg = error instanceof Error ? error.message : "Erro desconhecido";
-            const kind = await recordSendFailure(picked.id, errMsg);
-            send({
-              type: "progress",
-              index: i + 1,
-              total: shuffled.length,
-              sent,
-              failed,
-              skipped,
-              contact: contact.name || contact.phone,
-              instance: picked.name,
-              status: "error",
-              error: kind === "blocked" ? "Instância pausada (risco de bloqueio)" : errMsg,
-            });
-          }
-
-          if (i < shuffled.length - 1) {
-            const delay = computeDelay(i, safeProfile);
-            send({
-              type: "waiting",
-              delay,
-              message: `Anti-bloqueio: aguardando ${formatWait(delay)}...`,
-            });
-            await sleep(delay);
-          }
-        }
-
-        send({
-          type: "done",
-          sent,
-          failed,
-          skipped,
-          total: shuffled.length,
-          message: `Finalizado: ${sent} enviados, ${failed} falharam${skipped ? `, ${skipped} adiados` : ""}.`,
-        });
-
-        controller.close();
-      },
+    const campaign = await prisma.campaign.findFirst({
+      where: { id: campaignId, organizationId: orgId },
     });
+    if (!campaign) return NextResponse.json({ error: "Campanha não encontrada" }, { status: 404 });
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
+    const prepared = await prepareCampaignRun(campaignId, { contacts, skipSchedule: true });
+    executeCampaignRun(prepared.runId, {
+      skipSchedule: true,
+      previousStatus: prepared.previousStatus,
+    }).catch((err) => console.error("[Broadcast] executeCampaignRun:", err));
+
+    return NextResponse.json({
+      ok: true,
+      runId: prepared.runId,
+      campaignId,
+      campaignName: campaign.name,
+      total: prepared.total,
     });
   } catch (error) {
-    console.error("[Broadcast] Erro:", error);
-    return new Response(JSON.stringify({ error: "Erro interno no broadcast" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    const msg = error instanceof Error ? error.message : "Erro ao iniciar disparo";
+    const status = msg.includes("já está em execução") ? 409 : 500;
+    console.error("[Broadcast]", error);
+    return NextResponse.json({ error: msg }, { status });
   }
 }

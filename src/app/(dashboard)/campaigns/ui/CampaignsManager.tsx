@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { saveActiveRunId } from "@/app/(dashboard)/contacts/ui/BroadcastDock";
 
 type RunSummary = { status: string; total: number; sent: number; failed: number; startedAt: string | Date };
 type Campaign = {
@@ -134,7 +135,8 @@ export function CampaignsManager({
     try {
       const res = await fetch(`/api/campaigns/${id}/run`, { method: "POST" });
       const data = await res.json();
-      if (!res.ok) { setError(data.error || "Falha ao iniciar."); }
+      if (!res.ok) { setError(data.error || "Falha ao iniciar."); return; }
+      if (data.runId) saveActiveRunId(data.runId);
       setTimeout(reload, 1500);
     } finally { setBusyId(null); }
   }

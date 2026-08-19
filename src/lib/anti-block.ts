@@ -166,14 +166,18 @@ export function pickRandomInstance(
 
 export function computeDelay(
   index: number,
-  profile: AntiBlockProfile
+  profile: AntiBlockProfile,
+  opts: { skipExtra?: boolean } = {}
 ): number {
   const cfg = PROFILES[profile];
   const span = cfg.maxDelay - cfg.minDelay;
   const base = cfg.minDelay + Math.random() * span;
   const jitter = base * (0.85 + Math.random() * 0.3);
   const extra =
-    index > 0 && index % cfg.extraEvery === 0 && Math.random() < cfg.extraChance
+    !opts.skipExtra &&
+    index > 0 &&
+    index % cfg.extraEvery === 0 &&
+    Math.random() < cfg.extraChance
       ? cfg.extraMin + Math.random() * (cfg.extraMax - cfg.extraMin)
       : 0;
   return Math.round(jitter + extra);
