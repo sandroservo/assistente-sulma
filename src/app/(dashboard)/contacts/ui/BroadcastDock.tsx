@@ -148,7 +148,7 @@ export function BroadcastDockHost() {
   return (
     <BroadcastDock
       onClose={(runId) => {
-        dismissRuns([runId, ...lastIdsRef.current].filter(Boolean));
+        dismissRuns([runId, ...lastIdsRef.current].filter((id): id is string => Boolean(id)));
         clearActiveRunId();
         setHasQueue(false);
       }}
