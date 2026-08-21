@@ -3,14 +3,40 @@
  */
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, Clock, Loader2, Pause, Play, Radio, Square, X, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatSendError } from "@/lib/send-error";
 
 const STORAGE_KEY = "sulma-broadcast-run";
+const DISMISS_KEY = "sulma-broadcast-dismissed";
 const EVENT_NAME = "sulma-broadcast-run";
+
+function readDismissed(): string[] {
+  try {
+    const raw = sessionStorage.getItem(DISMISS_KEY);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function dismissRuns(ids: string[]) {
+  const next = new Set(readDismissed());
+  for (const id of ids) if (id) next.add(id);
+  try {
+    sessionStorage.setItem(DISMISS_KEY, JSON.stringify([...next]));
+  } catch {
+    /* ignore */
+  }
+}
+
+function allDismissed(ids: string[]) {
+  if (!ids.length) return false;
+  const dismissed = new Set(readDismissed());
+  return ids.every((id) => dismissed.has(id));
+}
 
 export type BroadcastRunContact = {
   id: string;
@@ -77,11 +103,11 @@ export function clearActiveRunId() {
   } catch {
     /* ignore */
   }
-  notifyRunChange();
 }
 
 export function BroadcastDockHost() {
   const [hasQueue, setHasQueue] = useState(false);
+  const lastIdsRef = useRef<string[]>([]);
 
   useEffect(() => {
     let stop = false;
@@ -91,7 +117,16 @@ export function BroadcastDockHost() {
         const data = await res.json().catch(() => ({}));
         if (stop) return;
         const status = data.run?.status as string | undefined;
-        setHasQueue(Boolean(status && (status === "RUNNING" || status === "PAUSED" || status === "DONE" || status === "CANCELLED")));
+        const ids: string[] =
+          Array.isArray(data.runIds) && data.runIds.length
+            ? data.runIds
+            : data.run?.id
+              ? [data.run.id]
+              : [];
+        lastIdsRef.current = ids;
+        const active = status === "RUNNING" || status === "PAUSED";
+        const finished = status === "DONE" || status === "CANCELLED";
+        setHasQueue(Boolean(ids.length && (active || (finished && !allDismissed(ids)))));
       } catch {
         /* ignore */
       }
@@ -112,7 +147,8 @@ export function BroadcastDockHost() {
   if (!hasQueue) return null;
   return (
     <BroadcastDock
-      onClose={() => {
+      onClose={(runId) => {
+        dismissRuns([runId, ...lastIdsRef.current].filter(Boolean));
         clearActiveRunId();
         setHasQueue(false);
       }}
@@ -123,7 +159,7 @@ export function BroadcastDockHost() {
 export function BroadcastDock({
   onClose,
 }: {
-  onClose: () => void;
+  onClose: (runId?: string) => void;
 }) {
   const [run, setRun] = useState<BroadcastRun | null>(null);
   const [open, setOpen] = useState(true);
@@ -229,7 +265,7 @@ export function BroadcastDock({
           type="button"
           onClick={() => {
             if (done) {
-              onClose();
+              onClose(run?.id);
             } else {
               setOpen(false);
             }
