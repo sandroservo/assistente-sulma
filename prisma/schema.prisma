@@ -70,6 +70,7 @@ model User {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   handoffs     Handoff[]    @relation("AssignedTo")
   sentMessages Message[]    @relation("SentByUser")
+  campaignRuns CampaignRun[]
 
   @@index([organizationId])
   @@index([email])
@@ -448,6 +449,7 @@ model Campaign {
 model CampaignRun {
   id                   String         @id @default(cuid())
   campaignId           String
+  createdByUserId      String?
   status               CampaignStatus @default(RUNNING) // RUNNING | PAUSED | DONE | CANCELLED
   total                Int            @default(0)
   sent                 Int            @default(0)
@@ -460,10 +462,12 @@ model CampaignRun {
   startedAt            DateTime       @default(now())
   finishedAt           DateTime?
 
-  campaign Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contacts CampaignContact[]
+  campaign     Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  createdByUser User?            @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  contacts     CampaignContact[]
 
   @@index([campaignId])
+  @@index([createdByUserId, status])
 }
 
 model CampaignContact {

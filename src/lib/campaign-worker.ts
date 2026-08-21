@@ -55,6 +55,20 @@ type ClaimedJob = CampaignContact & {
 let busy = false;
 const mediaByRun = new Map<string, string | null>();
 
+export async function syncCampaignStatus(campaignId: string) {
+  const open = await prisma.campaignRun.findMany({
+    where: { campaignId, status: { in: ["RUNNING", "PAUSED"] } },
+    select: { status: true },
+  });
+  let status: CampaignStatus = "DRAFT";
+  if (open.some((r) => r.status === "RUNNING")) status = "RUNNING";
+  else if (open.some((r) => r.status === "PAUSED")) status = "PAUSED";
+  await prisma.campaign.update({
+    where: { id: campaignId },
+    data: { status, ...(status === "DRAFT" ? { lastRunAt: new Date() } : {}) },
+  });
+}
+
 export function startCampaignWorker() {
   if (busy) return;
   processCampaignQueue().catch((err) => console.error("[CampaignWorker]", err));
@@ -146,11 +160,27 @@ async function reclaimStaleJobs() {
 async function claimNextJob(): Promise<ClaimedJob | null> {
   return prisma.$transaction(async (tx) => {
     const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      WITH user_wait AS (
+        SELECT
+          COALESCE(r."createdByUserId", '') AS uid,
+          MAX(cc."sentAt") AS last_sent
+        FROM "CampaignRun" r
+        INNER JOIN "CampaignContact" cc ON cc."runId" = r.id
+        WHERE r.status = 'RUNNING'::"CampaignStatus"
+        GROUP BY 1
+        HAVING COUNT(*) FILTER (WHERE cc.status = 'pending') > 0
+      ),
+      next_user AS (
+        SELECT uid FROM user_wait
+        ORDER BY last_sent NULLS FIRST, uid ASC
+        LIMIT 1
+      )
       SELECT cc.id
       FROM "CampaignContact" cc
       INNER JOIN "CampaignRun" r ON r.id = cc."runId"
       WHERE cc.status = 'pending'
         AND r.status = 'RUNNING'::"CampaignStatus"
+        AND COALESCE(r."createdByUserId", '') = (SELECT uid FROM next_user)
       ORDER BY r."startedAt" ASC, cc.id ASC
       LIMIT 1
       FOR UPDATE OF cc SKIP LOCKED
@@ -306,7 +336,13 @@ async function processJob(job: ClaimedJob): Promise<JobResult> {
       where: { id: job.runId },
       data: { sent: { increment: 1 }, consecutiveFailures: 0 },
     });
-    console.log("[CampaignWorker] enviado", { runId: job.runId, phone: job.phone, delayMs, typing });
+    console.log("[CampaignWorker] enviado", {
+      runId: job.runId,
+      userId: job.run.createdByUserId,
+      phone: job.phone,
+      delayMs,
+      typing,
+    });
     return { kind: "ok", delayMs };
   } catch (error) {
     if (inboxId) await revertMassOutbound(inboxId);
@@ -382,10 +418,13 @@ async function markRunWait(runId: string, waitMs: number, reason: string) {
   });
 }
 
-async function markRunningWaits(waitMs: number, reason: string) {
+async function markRunningWaits(waitMs: number, reason: string, organizationId?: string) {
   const until = new Date(Date.now() + waitMs);
   await prisma.campaignRun.updateMany({
-    where: { status: "RUNNING" },
+    where: {
+      status: "RUNNING",
+      ...(organizationId ? { campaign: { organizationId } } : {}),
+    },
     data: { waitUntil: until, waitReason: reason },
   });
 }
@@ -395,10 +434,7 @@ async function pauseRun(runId: string, campaignId: string, reason: string) {
     where: { id: runId },
     data: { status: "PAUSED", pauseReason: reason, waitUntil: null, waitReason: null },
   });
-  await prisma.campaign.update({
-    where: { id: campaignId },
-    data: { status: "PAUSED" },
-  });
+  await syncCampaignStatus(campaignId);
 }
 
 async function maybeFinalizeRun(runId: string) {
@@ -417,10 +453,7 @@ async function maybeFinalizeRun(runId: string) {
     where: { id: runId },
     data: { status: "DONE", finishedAt: new Date(), waitUntil: null, waitReason: null },
   });
-  await prisma.campaign.update({
-    where: { id: run.campaignId },
-    data: { lastRunAt: new Date(), status: "DRAFT" as CampaignStatus },
-  });
+  await syncCampaignStatus(run.campaignId);
   mediaByRun.delete(runId);
 }
 
@@ -440,9 +473,6 @@ export async function resumeCampaignRun(runId: string) {
     where: { id: runId },
     data: { status: "RUNNING", pauseReason: null, consecutiveFailures: 0, waitUntil: null, waitReason: null },
   });
-  await prisma.campaign.update({
-    where: { id: run.campaignId },
-    data: { status: "RUNNING" },
-  });
+  await syncCampaignStatus(run.campaignId);
   startCampaignWorker();
 }

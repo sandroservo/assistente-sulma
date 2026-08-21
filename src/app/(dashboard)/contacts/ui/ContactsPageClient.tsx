@@ -696,7 +696,7 @@ export function ContactsPageClient({ contacts }: ContactsPageClientProps) {
                 </div>
                 <div>
                   <h2 className="text-lg font-bold text-gray-800">Disparo em Massa</h2>
-                  <p className="text-xs text-gray-500">Escolha a campanha e os destinatários. O envio segue em segundo plano.</p>
+                  <p className="text-xs text-gray-500">Entra na sua fila. O WhatsApp envia uma mensagem por vez, revezando com os outros usuários.</p>
                 </div>
               </div>
               <button onClick={resetBroadcast} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600" aria-label="Fechar">

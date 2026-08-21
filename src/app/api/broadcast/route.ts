@@ -62,7 +62,11 @@ export async function POST(req: Request) {
     });
     if (!campaign) return NextResponse.json({ error: "Campanha não encontrada" }, { status: 404 });
 
-    const prepared = await prepareCampaignRun(campaignId, { contacts, skipSchedule: true });
+    const prepared = await prepareCampaignRun(campaignId, {
+      contacts,
+      skipSchedule: true,
+      userId: session.user.id,
+    });
     executeCampaignRun(prepared.runId);
 
     return NextResponse.json({
@@ -71,6 +75,8 @@ export async function POST(req: Request) {
       campaignId,
       campaignName: campaign.name,
       total: prepared.total,
+      added: prepared.added,
+      appended: prepared.appended,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Erro ao iniciar disparo";

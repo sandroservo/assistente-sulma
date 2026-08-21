@@ -33,6 +33,7 @@ export type BroadcastRun = {
   waitReason?: string | null;
   campaignName: string;
   etaSeconds?: number | null;
+  ownerName?: string | null;
   contacts: BroadcastRunContact[];
 };
 
@@ -80,36 +81,48 @@ export function clearActiveRunId() {
 }
 
 export function BroadcastDockHost() {
-  const [runId, setRunId] = useState<string | null>(null);
+  const [hasQueue, setHasQueue] = useState(false);
 
   useEffect(() => {
-    const sync = () => setRunId(readActiveRunId());
-    sync();
-    window.addEventListener(EVENT_NAME, sync);
-    window.addEventListener("storage", sync);
+    let stop = false;
+    async function tick() {
+      try {
+        const res = await fetch("/api/broadcast/mine");
+        const data = await res.json().catch(() => ({}));
+        if (stop) return;
+        const status = data.run?.status as string | undefined;
+        setHasQueue(Boolean(status && (status === "RUNNING" || status === "PAUSED" || status === "DONE")));
+      } catch {
+        /* ignore */
+      }
+      if (!stop) timer = setTimeout(tick, 2500);
+    }
+    const onEvent = () => {
+      setHasQueue(true);
+    };
+    window.addEventListener(EVENT_NAME, onEvent);
+    let timer = setTimeout(tick, 0);
     return () => {
-      window.removeEventListener(EVENT_NAME, sync);
-      window.removeEventListener("storage", sync);
+      stop = true;
+      clearTimeout(timer);
+      window.removeEventListener(EVENT_NAME, onEvent);
     };
   }, []);
 
-  if (!runId) return null;
+  if (!hasQueue) return null;
   return (
     <BroadcastDock
-      runId={runId}
       onClose={() => {
         clearActiveRunId();
-        setRunId(null);
+        setHasQueue(false);
       }}
     />
   );
 }
 
 export function BroadcastDock({
-  runId,
   onClose,
 }: {
-  runId: string;
   onClose: () => void;
 }) {
   const [run, setRun] = useState<BroadcastRun | null>(null);
@@ -122,11 +135,15 @@ export function BroadcastDock({
     let stop = false;
     async function tick() {
       try {
-        const res = await fetch(`/api/broadcast/${runId}`);
+        const res = await fetch("/api/broadcast/mine");
         const data = await res.json();
         if (stop) return;
         if (!res.ok) {
           setError(data.error || "Não foi possível acompanhar o disparo");
+          return;
+        }
+        if (!data.run) {
+          setRun(null);
           return;
         }
         setRun(data.run);
@@ -144,7 +161,7 @@ export function BroadcastDock({
       stop = true;
       clearTimeout(timer);
     };
-  }, [runId]);
+  }, []);
 
   const done = run?.status === "DONE" || run?.status === "CANCELLED";
   const paused = run?.status === "PAUSED";
@@ -157,9 +174,10 @@ export function BroadcastDock({
   const pendingCount = run?.contacts.filter((c) => c.status === "pending" || c.status === "sending").length ?? 0;
 
   async function resume() {
+    if (!run?.id) return;
     setResuming(true);
     try {
-      const res = await fetch(`/api/broadcast/${runId}/resume`, { method: "POST" });
+      const res = await fetch(`/api/broadcast/${run.id}/resume`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) setError(data.error || "Não foi possível retomar");
     } finally {
@@ -182,7 +200,7 @@ export function BroadcastDock({
         <button type="button" onClick={() => setOpen((v) => !v)} className="flex flex-1 items-center gap-3 min-w-0 text-left">
           {done ? <CheckCircle2 className="w-4 h-4 text-[#FFD600] shrink-0" /> : paused ? <XCircle className="w-4 h-4 text-orange-300 shrink-0" /> : waiting ? <Clock className="w-4 h-4 text-[#FFD600] shrink-0" /> : <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold truncate">{run?.campaignName || "Disparo"}</p>
+            <p className="text-sm font-semibold truncate">Sua fila · {run?.campaignName || "Disparo"}</p>
             <p className="text-[11px] text-white/70">
               {done
                 ? "Concluído"
@@ -191,8 +209,8 @@ export function BroadcastDock({
                   : waiting
                     ? (run?.waitReason || `Aguardando · continua ${waitingUntil?.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })}`)
                     : sendingCount > 0
-                      ? `Enviando agora${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`
-                      : `Na fila${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`}
+                      ? `Sua vez de enviar${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`
+                      : `Na sua fila · reveza com os outros (uma mensagem por vez)${run?.etaSeconds ? ` · falta ${formatEta(run.etaSeconds)}` : ""}`}
               {" · "}
               {run?.sent ?? 0} ok
               {(run?.failed ?? 0) > 0 ? ` · ${run?.failed} falha` : ""}
