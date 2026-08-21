@@ -214,6 +214,7 @@ export default async function ReportsPage({
         stats={stats}
         days={days}
         sla={sla}
+        isAdmin={["OWNER", "ADMIN"].includes(session.user.role ?? "")}
       />
     </div>
   );

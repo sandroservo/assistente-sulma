@@ -31,6 +31,7 @@ import {
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { LEAD_STATUS_LABELS, LEAD_STATUS_COLORS } from "@/lib/lead-funnel";
+import { AdminBroadcastQueues } from "./AdminBroadcastQueues";
 
 interface UserStat {
   id: string;
@@ -82,6 +83,7 @@ interface ReportsViewProps {
   stats: Stats;
   days: number;
   sla?: OrgSla;
+  isAdmin?: boolean;
 }
 
 function fmtDuration(sec: number): string {
@@ -96,7 +98,7 @@ function fmtDuration(sec: number): string {
 const STATUS_LABELS = LEAD_STATUS_LABELS;
 const STATUS_COLORS = LEAD_STATUS_COLORS;
 
-export function ReportsView({ userStats, stats, days, sla }: ReportsViewProps) {
+export function ReportsView({ userStats, stats, days, sla, isAdmin = false }: ReportsViewProps) {
   const router = useRouter();
   const totalConv = stats.conversationsOpen + stats.conversationsClosed;
   const closeRate = totalConv > 0 ? Math.round((stats.conversationsClosed / totalConv) * 100) : 0;
@@ -125,6 +127,8 @@ export function ReportsView({ userStats, stats, days, sla }: ReportsViewProps) {
           ))}
         </div>
       </div>
+
+      {isAdmin && <AdminBroadcastQueues />}
 
       {/* Cards de conversas: abertas / encerradas / taxa */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
