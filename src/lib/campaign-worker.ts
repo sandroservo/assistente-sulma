@@ -457,6 +457,48 @@ async function maybeFinalizeRun(runId: string) {
   mediaByRun.delete(runId);
 }
 
+export async function pauseCampaignRun(runId: string, reason = "Pausado pelo consultor") {
+  const run = await prisma.campaignRun.findUnique({ where: { id: runId } });
+  if (!run) throw new Error("Execução não encontrada");
+  if (run.status !== "RUNNING") throw new Error("Este disparo não está em andamento");
+  await pauseRun(runId, run.campaignId, reason);
+}
+
+export async function stopCampaignRun(runId: string) {
+  const run = await prisma.campaignRun.findUnique({ where: { id: runId } });
+  if (!run) throw new Error("Execução não encontrada");
+  if (run.status === "DONE" || run.status === "CANCELLED") {
+    throw new Error("Este disparo já terminou");
+  }
+
+  await prisma.campaignContact.updateMany({
+    where: { runId, status: { in: ["pending", "sending"] } },
+    data: { status: "skipped", errorKind: "cancelled", errorMsg: "Parado pelo consultor" },
+  });
+
+  const [sent, failed, skipped] = await Promise.all([
+    prisma.campaignContact.count({ where: { runId, status: { in: ["sent", "delivered", "read"] } } }),
+    prisma.campaignContact.count({ where: { runId, status: "failed" } }),
+    prisma.campaignContact.count({ where: { runId, status: "skipped" } }),
+  ]);
+
+  await prisma.campaignRun.update({
+    where: { id: runId },
+    data: {
+      status: "CANCELLED",
+      sent,
+      failed,
+      skipped,
+      finishedAt: new Date(),
+      waitUntil: null,
+      waitReason: null,
+      pauseReason: "Parado pelo consultor",
+    },
+  });
+  await syncCampaignStatus(run.campaignId);
+  mediaByRun.delete(runId);
+}
+
 export async function resumeCampaignRun(runId: string) {
   const run = await prisma.campaignRun.findUnique({
     where: { id: runId },

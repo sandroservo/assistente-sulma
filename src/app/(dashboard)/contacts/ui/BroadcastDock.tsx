@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, Clock, Loader2, Radio, X, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Loader2, Pause, Play, Radio, Square, X, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatSendError } from "@/lib/send-error";
 
@@ -91,7 +91,7 @@ export function BroadcastDockHost() {
         const data = await res.json().catch(() => ({}));
         if (stop) return;
         const status = data.run?.status as string | undefined;
-        setHasQueue(Boolean(status && (status === "RUNNING" || status === "PAUSED" || status === "DONE")));
+        setHasQueue(Boolean(status && (status === "RUNNING" || status === "PAUSED" || status === "DONE" || status === "CANCELLED")));
       } catch {
         /* ignore */
       }
@@ -129,7 +129,7 @@ export function BroadcastDock({
   const [open, setOpen] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "sent" | "pending" | "failed" | "skipped">("all");
-  const [resuming, setResuming] = useState(false);
+  const [acting, setActing] = useState<"pause" | "stop" | "resume" | null>(null);
 
   useEffect(() => {
     let stop = false;
@@ -173,15 +173,22 @@ export function BroadcastDock({
   const sendingCount = run?.contacts.filter((c) => c.status === "sending").length ?? 0;
   const pendingCount = run?.contacts.filter((c) => c.status === "pending" || c.status === "sending").length ?? 0;
 
-  async function resume() {
-    if (!run?.id) return;
-    setResuming(true);
+  async function control(action: "pause" | "stop" | "resume") {
+    if (action === "stop") {
+      const ok = window.confirm("Parar agora? Quem já recebeu fica. O restante da fila não será enviado.");
+      if (!ok) return;
+    }
+    setActing(action);
     try {
-      const res = await fetch(`/api/broadcast/${run.id}/resume`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) setError(data.error || "Não foi possível retomar");
+      const res = await fetch("/api/broadcast/mine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) setError(data.error || "Não foi possível alterar o disparo");
     } finally {
-      setResuming(false);
+      setActing(null);
     }
   }
 
@@ -203,9 +210,9 @@ export function BroadcastDock({
             <p className="text-sm font-semibold truncate">Sua fila · {run?.campaignName || "Disparo"}</p>
             <p className="text-[11px] text-white/70">
               {done
-                ? "Concluído"
+                ? (run?.status === "CANCELLED" ? "Parado por você" : "Concluído")
                 : paused
-                  ? "Pausado automaticamente"
+                  ? (run?.pauseReason?.includes("consultor") ? "Pausado por você" : "Pausado automaticamente")
                   : waiting
                     ? (run?.waitReason || `Aguardando · continua ${waitingUntil?.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" })}`)
                     : sendingCount > 0
@@ -304,20 +311,46 @@ export function BroadcastDock({
           )}
           {paused && (
             <div className="rounded-lg bg-orange-50 border border-orange-200 p-2 space-y-2">
-              <p className="text-xs text-orange-800">{run?.pauseReason || "Disparo pausado por falhas consecutivas."}</p>
+              <p className="text-xs text-orange-800">{run?.pauseReason || "Disparo pausado."}</p>
+            </div>
+          )}
+          {!done && (
+            <div className="flex gap-2">
+              {paused ? (
+                <button
+                  type="button"
+                  onClick={() => control("resume")}
+                  disabled={acting !== null}
+                  className="flex-1 text-xs font-medium px-3 py-1.5 rounded-lg bg-[#001A5E] text-white disabled:opacity-60 inline-flex items-center justify-center gap-1.5"
+                >
+                  {acting === "resume" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                  {acting === "resume" ? "Retomando…" : "Retomar"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => control("pause")}
+                  disabled={acting !== null}
+                  className="flex-1 text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-60 inline-flex items-center justify-center gap-1.5"
+                >
+                  {acting === "pause" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pause className="w-3.5 h-3.5" />}
+                  {acting === "pause" ? "Pausando…" : "Pausar"}
+                </button>
+              )}
               <button
                 type="button"
-                onClick={resume}
-                disabled={resuming}
-                className="text-xs font-medium px-3 py-1.5 rounded-lg bg-[#001A5E] text-white disabled:opacity-60"
+                onClick={() => control("stop")}
+                disabled={acting !== null}
+                className="flex-1 text-xs font-medium px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-60 inline-flex items-center justify-center gap-1.5"
               >
-                {resuming ? "Retomando…" : "Retomar envio"}
+                {acting === "stop" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
+                {acting === "stop" ? "Parando…" : "Parar"}
               </button>
             </div>
           )}
-          {!done && !paused && !waiting && (
+          {!done && (
             <p className="text-[11px] text-gray-500">
-              Pode fechar este painel, trocar de página ou continuar trabalhando. O envio não para.
+              Pausar segura a fila. Parar descarta o que ainda não saiu. Fechar o painel não encerra o envio.
             </p>
           )}
           {done && (
