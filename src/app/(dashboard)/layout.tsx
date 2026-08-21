@@ -6,6 +6,7 @@
 import { Sidebar } from "@/components/layout/Sidebar";
 import { GlobalSearch } from "@/components/GlobalSearch";
 import { BroadcastDockHost } from "@/app/(dashboard)/contacts/ui/BroadcastDock";
+import { ConsultantAlertHost } from "@/app/(dashboard)/chats/ui/ConsultantAlertHost";
 
 export default function DashboardLayout({
   children,
@@ -18,6 +19,7 @@ export default function DashboardLayout({
       <main className="flex-1 min-w-0 overflow-auto">{children}</main>
       <GlobalSearch />
       <BroadcastDockHost />
+      <ConsultantAlertHost />
     </div>
   );
 }

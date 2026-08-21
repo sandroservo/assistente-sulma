@@ -11,6 +11,7 @@ import { evolutionSendText, evolutionSendTextHumanized, evolutionGetProfilePictu
 import { transcribeAudio, describeImage } from "@/lib/media";
 import { saveMedia } from "@/lib/media-storage";
 import { generateAIResponse, shouldTransferToHuman, detectLeadStatus, generateConversationSummary } from "@/lib/ai";
+import { alertConsultants, isConsultantOffer, isAffirmativeReply, isNegativeReply } from "@/lib/consultant-alert";
 import { updateLeadScore, getStatusFromScore } from "@/lib/lead-score";
 import { PROTECTED_FUNNEL_STATUSES, funnelIndex } from "@/lib/lead-funnel";
 import {
@@ -441,21 +442,14 @@ async function ingestWhatsAppMessage(
 
     // Verifica se pediu transferência para humano
     if (text && shouldTransferToHuman(text)) {
-      await prisma.$transaction([
-        prisma.lead.update({
-          where: { id: lead.id },
-          data: { status: "HUMANO_SOLICITADO", ownerType: "human" },
-        }),
-        prisma.handoff.create({
-          data: {
-            leadId: lead.id,
-            conversationId: conversation.id,
-            requestedBy: "lead",
-            reason: "Lead solicitou atendente humano",
-            summary: text,
-          },
-        }),
-      ]);
+      await alertConsultants({
+        leadId: lead.id,
+        conversationId: conversation.id,
+        requestedBy: "lead",
+        reason: "Lead pediu para falar com um consultor",
+        summary: text,
+        takeOverBot: true,
+      });
 
       const handoffMessage = `Entendido! 👤 Vou te transferir para um de nossos atendentes. Aguarde um momento que logo alguém vai te atender!`;
       
@@ -476,6 +470,46 @@ async function ingestWhatsAppMessage(
       });
 
       return { ok: true, action: "handoff" };
+    }
+
+    if (lead.status === "HUMANO_SOLICITADO" && text) {
+      if (isAffirmativeReply(text)) {
+        await alertConsultants({
+          leadId: lead.id,
+          conversationId: conversation.id,
+          requestedBy: "lead",
+          reason: "Lead aceitou falar com a consultora",
+          summary: text,
+          takeOverBot: true,
+        });
+        const okMsg = "Perfeito! Um consultor já foi avisado e já já te atende por aqui.";
+        await evolutionSendText({
+          number: phone,
+          text: okMsg,
+          instanceName: instance?.instanceName,
+          instanceToken: instance?.token || undefined,
+        });
+        await prisma.message.create({
+          data: {
+            conversationId: conversation.id,
+            direction: "out",
+            type: "text",
+            body: okMsg,
+            sentAt: new Date(),
+          },
+        });
+        return { ok: true, action: "handoff_accepted" };
+      }
+      if (isNegativeReply(text)) {
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { ownerType: "bot", status: "ORIENTAR" },
+        });
+        await prisma.handoff.updateMany({
+          where: { conversationId: conversation.id, status: "open" },
+          data: { status: "closed" },
+        });
+      }
     }
 
     // Guarda anti-loop: se o número do outro lado também é automação, ele responde
@@ -545,6 +579,17 @@ async function ingestWhatsAppMessage(
         where: { id: conversation.id },
         data: { lastMessageAt: new Date(), unreadCount: 0 },
       });
+
+      if (isConsultantOffer(botResponse)) {
+        await alertConsultants({
+          leadId: lead.id,
+          conversationId: conversation.id,
+          requestedBy: "bot",
+          reason: "A Sulma ofereceu encaminhar para uma consultora",
+          summary: botResponse.slice(0, 400),
+          takeOverBot: false,
+        });
+      }
 
       // Calcula e persiste o Lead Score (0–1.000)
       const scoreBreakdown = await updateLeadScore(lead.id, messageHistory, text ?? "");

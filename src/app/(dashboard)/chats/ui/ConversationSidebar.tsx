@@ -39,7 +39,7 @@ interface Conversation {
   tags?: { id: string; name: string; color: string }[];
 }
 
-type FilterTab = "abertas" | "nao-lidas" | "encerradas" | "todas";
+type FilterTab = "abertas" | "nao-lidas" | "encerradas" | "consultor" | "todas";
 interface Sector { id: string; name: string; color: string; }
 
 interface ConversationSidebarProps {
@@ -310,6 +310,7 @@ export default function ConversationSidebar({
   }, [totalUnread]);
 
   const isClosed = (c: Conversation) => c.convStatus === "closed";
+  const needsConsultant = (c: Conversation) => c.status === "HUMANO_SOLICITADO";
 
   // Filtra por aba + busca
   const filtered = conversations.filter((c) => {
@@ -320,6 +321,7 @@ export default function ConversationSidebar({
       if (tab === "abertas" && isClosed(c)) return false;
       if (tab === "encerradas" && !isClosed(c)) return false;
       if (tab === "nao-lidas" && (c.unreadCount === 0 || isClosed(c))) return false;
+      if (tab === "consultor" && (!needsConsultant(c) || isClosed(c))) return false;
     }
     if (sectorFilter !== "todos" && c.sectorId !== sectorFilter) return false;
     if (onlyMine && c.assignedUserId !== currentUserId) return false;
@@ -334,6 +336,9 @@ export default function ConversationSidebar({
 
   // Ordena: fixadas primeiro, depois não-lidas, depois por data
   const sorted = [...filtered].sort((a, b) => {
+    const wa = needsConsultant(a) && !isClosed(a) ? 1 : 0;
+    const wb = needsConsultant(b) && !isClosed(b) ? 1 : 0;
+    if (wa !== wb) return wb - wa;
     if (!!a.isPinned !== !!b.isPinned) return a.isPinned ? -1 : 1;
     if (a.unreadCount > 0 && b.unreadCount === 0) return -1;
     if (b.unreadCount > 0 && a.unreadCount === 0) return 1;
@@ -347,11 +352,13 @@ export default function ConversationSidebar({
     abertas: conversations.filter((c) => !isClosed(c)).length,
     naoLidas: conversations.filter((c) => c.unreadCount > 0 && !isClosed(c)).length,
     encerradas: conversations.filter(isClosed).length,
+    consultor: conversations.filter((c) => needsConsultant(c) && !isClosed(c)).length,
     todas: conversations.length,
   };
   const TABS: { key: FilterTab; label: string; count: number }[] = [
     { key: "abertas", label: "Abertas", count: counts.abertas },
     { key: "nao-lidas", label: "Não lidas", count: counts.naoLidas },
+    { key: "consultor", label: "Consultor", count: counts.consultor },
     { key: "encerradas", label: "Encerradas", count: counts.encerradas },
     { key: "todas", label: "Todas", count: counts.todas },
   ];
@@ -485,6 +492,16 @@ export default function ConversationSidebar({
 
       {/* Conversation list */}
       <div className="flex-1 overflow-y-auto">
+        {counts.consultor > 0 && tab !== "consultor" && (
+          <button
+            type="button"
+            onClick={() => setTab("consultor")}
+            className="w-full px-3 py-2 text-left bg-[#001A5E] text-white text-xs font-medium flex items-center justify-between"
+          >
+            <span>{counts.consultor} {counts.consultor === 1 ? "lead pedindo" : "leads pedindo"} consultor</span>
+            <span className="rounded bg-[#FFD600] text-[#001A5E] px-2 py-0.5 font-bold">Ver</span>
+          </button>
+        )}
         {sorted.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 px-4">
             <MessageSquare className="h-10 w-10 text-gray-300 mb-3" />
@@ -505,6 +522,7 @@ export default function ConversationSidebar({
               className={cn(
                 "group w-full flex items-start gap-3 px-4 py-3 text-left transition-colors border-b border-gray-50 hover:bg-gray-50",
                 isActive && "bg-[#EEF2FF]/80 hover:bg-[#EEF2FF]/80 border-l-2 border-l-[#001A5E]",
+                needsConsultant(conv) && !isClosed(conv) && !isActive && "bg-[#FFF8DC] border-l-2 border-l-[#FFD600]",
                 isClosed(conv) && "opacity-60"
               )}
               aria-label={`Conversa com ${displayName}`}
@@ -544,6 +562,9 @@ export default function ConversationSidebar({
                   )}>
                     {conv.isPinned && <Pin className="h-3 w-3 text-[#001A5E] shrink-0 fill-[#001A5E]" />}
                     {isClosed(conv) && <span className="text-[9px] px-1 rounded bg-gray-200 text-gray-500 shrink-0">encerrada</span>}
+                    {needsConsultant(conv) && !isClosed(conv) && (
+                      <span className="text-[9px] px-1 rounded bg-[#FFD600] text-[#001A5E] font-bold shrink-0">consultor</span>
+                    )}
                     <span className="truncate">{displayName}</span>
                   </span>
                   <span className="flex items-center gap-1 flex-shrink-0 ml-2">

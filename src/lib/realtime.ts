@@ -7,9 +7,11 @@ import { EventEmitter } from "events";
  */
 
 export interface ConversationEvent {
-  type: "conversation_update" | "message" | "status" | "pin";
+  type: "conversation_update" | "message" | "status" | "pin" | "handoff";
   conversationId?: string;
   leadId?: string;
+  name?: string;
+  reason?: string;
   at: number;
 }
 
@@ -28,6 +30,8 @@ export function emitConversationUpdate(
     type: payload.type ?? "conversation_update",
     conversationId: payload.conversationId,
     leadId: payload.leadId,
+    name: payload.name,
+    reason: payload.reason,
     at: Date.now(),
   };
   try {
