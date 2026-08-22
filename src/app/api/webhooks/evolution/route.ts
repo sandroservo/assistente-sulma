@@ -11,6 +11,7 @@ import { evolutionSendText, evolutionSendTextHumanized, evolutionGetProfilePictu
 import { transcribeAudio, describeImage } from "@/lib/media";
 import { saveMedia } from "@/lib/media-storage";
 import { generateAIResponse, shouldTransferToHuman, detectLeadStatus, generateConversationSummary } from "@/lib/ai";
+import { countRapidTurns } from "@/lib/bot-detect";
 import { alertConsultants, isConsultantOffer, isAffirmativeReply, isNegativeReply } from "@/lib/consultant-alert";
 import { updateLeadScore, getStatusFromScore } from "@/lib/lead-score";
 import { PROTECTED_FUNNEL_STATUSES, funnelIndex } from "@/lib/lead-funnel";
@@ -434,6 +435,15 @@ async function ingestWhatsAppMessage(
       return { ok: true, action: "human_owner" };
     }
 
+    // Número já flagado como automação (bot do outro lado): Sulma fica em silêncio.
+    const botFlag = await prisma.leadMemory.findUnique({
+      where: { leadId_key: { leadId: lead.id, key: "bot_loop_detected" } },
+      select: { id: true },
+    });
+    if (botFlag) {
+      return { ok: true, action: "bot_muted" };
+    }
+
     // Lista de exceção: números da empresa etc. — Sulma não responde
     const phoneNormalized = phone.replace(/\D/g, "").slice(-11);
     if (phoneNormalized) {
@@ -520,6 +530,38 @@ async function ingestWhatsAppMessage(
           data: { status: "closed" },
         });
       }
+    }
+
+    // Detecção de bot no outro lado por TIMING: automação responde muito rápido e de
+    // forma consistente. Se as últimas trocas foram "out → in" em janela curta, várias
+    // vezes seguidas, é ping-pong bot-vs-bot: marca o lead, encerra e silencia.
+    const RAPID_MS = 90 * 1000;        // in até 90s depois do nosso out = resposta automática
+    const MIN_RAPID_TURNS = 4;         // 4 trocas rápidas seguidas confirma o padrão (evita falso-positivo com humano ágil)
+    const timingMsgs = await prisma.message.findMany({
+      where: { conversationId: conversation.id },
+      orderBy: { createdAt: "desc" },
+      take: 8,
+      select: { direction: true, createdAt: true },
+    });
+    timingMsgs.reverse(); // cronológico
+    const maxRapidStreak = countRapidTurns(timingMsgs, RAPID_MS);
+    if (maxRapidStreak >= MIN_RAPID_TURNS) {
+      const botTag = await prisma.tag.upsert({
+        where: { organizationId_name: { organizationId: lead.organizationId, name: "🤖 Bot detectado" } },
+        update: {},
+        create: { organizationId: lead.organizationId, name: "🤖 Bot detectado", color: "#DC2626" },
+      });
+      await prisma.$transaction([
+        prisma.lead.update({ where: { id: lead.id }, data: { tags: { connect: { id: botTag.id } } } }),
+        prisma.conversation.update({ where: { id: conversation.id }, data: { status: "closed" } }),
+        prisma.leadMemory.upsert({
+          where: { leadId_key: { leadId: lead.id, key: "bot_loop_detected" } },
+          update: { value: `rapidTurns=${maxRapidStreak}` },
+          create: { leadId: lead.id, type: "context", key: "bot_loop_detected", value: `rapidTurns=${maxRapidStreak}` },
+        }),
+      ]);
+      console.log("[BotDetect] automação detectada, Sulma silenciada", { leadId: lead.id, conversationId: conversation.id, rapidTurns: maxRapidStreak });
+      return { ok: true, action: "bot_detected", rapidTurns: maxRapidStreak };
     }
 
     // Guarda anti-loop: se o número do outro lado também é automação, ele responde
