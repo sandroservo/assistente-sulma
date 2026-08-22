@@ -4,7 +4,8 @@
  */
 
 import { prisma } from "@/lib/prisma";
-import { startCampaignWorker, syncCampaignStatus } from "@/lib/campaign-worker";
+import { syncCampaignStatus } from "@/lib/campaign-worker";
+import { dispatchCampaignRun } from "@/lib/messaging/dispatch";
 import { isSuppressed } from "@/lib/suppression";
 
 export type CampaignTarget = { phone: string; name: string | null };
@@ -31,7 +32,7 @@ function uniqueTargets(contacts: CampaignTarget[]): CampaignTarget[] {
 
 export async function runCampaign(campaignId: string, opts: RunCampaignOpts) {
   const prepared = await prepareCampaignRun(campaignId, opts);
-  startCampaignWorker();
+  await dispatchCampaignRun(prepared.runId);
   return prepared;
 }
 
@@ -154,7 +155,7 @@ export async function prepareCampaignRun(campaignId: string, opts: RunCampaignOp
   };
 }
 
-/** Inicia o worker (jobs já persistidos). */
-export function executeCampaignRun(_runId?: string) {
-  startCampaignWorker();
+/** Dispara o run (jobs já persistidos) pelo driver ativo (legacy|rabbitmq). */
+export async function executeCampaignRun(runId: string) {
+  await dispatchCampaignRun(runId);
 }

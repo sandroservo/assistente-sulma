@@ -67,7 +67,7 @@ export async function POST(req: Request) {
       skipSchedule: true,
       userId: session.user.id,
     });
-    executeCampaignRun(prepared.runId);
+    await executeCampaignRun(prepared.runId);
 
     return NextResponse.json({
       ok: true,

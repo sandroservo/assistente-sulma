@@ -516,5 +516,7 @@ export async function resumeCampaignRun(runId: string) {
     data: { status: "RUNNING", pauseReason: null, consecutiveFailures: 0, waitUntil: null, waitReason: null },
   });
   await syncCampaignStatus(run.campaignId);
-  startCampaignWorker();
+  // legacy → reinicia worker in-process; rabbitmq → republica os pending elegíveis.
+  const { dispatchCampaignRun } = await import("@/lib/messaging/dispatch");
+  await dispatchCampaignRun(runId);
 }

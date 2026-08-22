@@ -1,24 +1,23 @@
-# Autor: Sandro Servo
-# Site: https://cloudservo.com.br
+# Referência: mesclar o serviço rabbitmq ao docker-compose.yml existente.
+# O CRM Node/Next.js permanece fora de Docker.
 
 services:
   db:
     image: postgres:16
     environment:
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_USER: postgres
-      POSTGRES_DB: secretaria
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-secretaria}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # Transporte/coordenação de trabalho das campanhas. O CRM (Next.js) roda FORA do Docker.
   rabbitmq:
     image: rabbitmq:3-management
     hostname: sulma-rabbitmq

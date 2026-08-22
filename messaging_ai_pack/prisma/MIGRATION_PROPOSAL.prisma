@@ -1,0 +1,32 @@
+// Aplicar estas alterações ao model CampaignContact existente.
+// Não substitua o schema.prisma inteiro por este arquivo.
+
+model CampaignContact {
+  id             String    @id @default(cuid())
+  runId          String
+  phone          String
+  name           String?
+  status         String    @default("pending")
+  errorKind      String?
+  errorMsg       String?   @db.Text
+  providerId     String?
+  claimedAt      DateTime? // legado; manter durante rollout
+  sentAt         DateTime?
+
+  // RabbitMQ / idempotência
+  queueJobId     String?   @unique
+  queuedAt       DateTime?
+  processingAt   DateTime?
+  attemptCount   Int       @default(0)
+  lastAttemptAt  DateTime?
+  notBefore      DateTime?
+  lastQueueError String?   @db.Text
+
+  run CampaignRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([runId, status])
+  @@index([status])
+  @@index([status, notBefore])
+  @@index([providerId])
+}

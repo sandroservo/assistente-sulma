@@ -128,6 +128,16 @@ export async function POST(req: Request) {
                 where: { providerId: msgId },
                 data: { status: newStatus },
               });
+              // Espelha entregue/lido no funil da campanha (só avança, nunca regride).
+              if (newStatus === "delivered" || newStatus === "read") {
+                await prisma.campaignContact.updateMany({
+                  where: {
+                    providerId: msgId,
+                    status: newStatus === "read" ? { in: ["sent", "delivered"] } : "sent",
+                  },
+                  data: { status: newStatus },
+                });
+              }
             } catch { /* ignore */ }
           }
         }

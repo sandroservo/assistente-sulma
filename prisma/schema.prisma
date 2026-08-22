@@ -479,13 +479,24 @@ model CampaignContact {
   errorKind  String?   // invalid_number | blocked | transient | unknown | opt_out
   errorMsg   String?   @db.Text
   providerId String?   // id da mensagem na Evolution (p/ casar entregue/lido via webhook)
-  claimedAt  DateTime?
+  claimedAt  DateTime? // legado (worker Postgres); manter durante rollout
   sentAt     DateTime?
+
+  // RabbitMQ / idempotência (messaging_ai_pack)
+  queueJobId     String?   @unique // id único do job publicado — trava de reenvio
+  queuedAt       DateTime? // marcado após publisher confirm
+  processingAt   DateTime? // consumer moveu queued→processing
+  attemptCount   Int       @default(0)
+  lastAttemptAt  DateTime?
+  notBefore      DateTime? // espera de capacidade/janela (retry recalcula)
+  lastQueueError String?   @db.Text
 
   run CampaignRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@index([runId])
+  @@index([runId, status])
   @@index([status])
+  @@index([status, notBefore])
   @@index([providerId])
 }
 
