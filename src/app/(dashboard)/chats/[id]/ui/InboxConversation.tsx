@@ -8,7 +8,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Mic, Image as ImageIcon, FileText, Video, Bot, UserCheck, Reply, Pencil, Check, Contact, MessageSquare, Phone, Megaphone } from "lucide-react";
+import { Mic, Image as ImageIcon, FileText, Video, Bot, UserCheck, Reply, Pencil, Check, Contact, MessageSquare, Phone, Megaphone, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { formatPhone } from "@/lib/formatters";
@@ -156,6 +156,13 @@ export default function InboxConversation({
   leadPhone = "",
   contactName = "",
 }: InboxConversationProps) {
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!lightboxUrl) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setLightboxUrl(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightboxUrl]);
   const [messages, setMessages] = useState<Message[]>(
     initialMessages.map((m) => ({
       id: m.id,
@@ -470,7 +477,7 @@ export default function InboxConversation({
                             alt="Imagem"
                             className="rounded-xl max-w-full max-h-72 object-cover cursor-pointer"
                             loading="lazy"
-                            onClick={() => window.open(m.mediaUrl!, "_blank")}
+                            onClick={() => setLightboxUrl(m.mediaUrl!)}
                           />
                         </div>
                       )}
@@ -622,6 +629,30 @@ export default function InboxConversation({
         })}
         <div ref={scrollRef} />
       </div>
+
+      {/* Lightbox: imagem abre em modal dentro do próprio chat */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setLightboxUrl(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <img
+            src={lightboxUrl}
+            alt="Imagem"
+            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            className="absolute top-4 right-4 rounded-full bg-black/40 p-2 text-white/90 hover:text-white"
+            onClick={() => setLightboxUrl(null)}
+            aria-label="Fechar"
+          >
+            <X className="h-6 w-6" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
