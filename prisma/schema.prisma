@@ -429,7 +429,7 @@ model Campaign {
   mediaBase64    String?            @db.Text // imagem opcional (mesmo formato do broadcast)
   mediaMimeType  String?
   profile        String             @default("balanced") // AntiBlockProfile: conservative|balanced|aggressive
-  aiVariation    Boolean            @default(false) // IA reescreve a mensagem por contato (parece conversa)
+  aiVariation    Boolean            @default(true) // IA reescreve a mensagem por contato (parece conversa)
   instanceIds    String[]           // instâncias permitidas (vazio = todas conectadas)
   targetFilter   Json?              // filtro sobre Leads: { category?, status? }
   status         CampaignStatus     @default(DRAFT)

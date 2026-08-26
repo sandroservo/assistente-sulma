@@ -52,7 +52,7 @@ export async function POST(req: Request) {
       mediaBase64: body.mediaBase64 || null,
       mediaMimeType: body.mediaMimeType || null,
       profile: ["conservative", "balanced", "aggressive"].includes(body.profile) ? body.profile : "conservative",
-      aiVariation: body.aiVariation === true,
+      aiVariation: body.aiVariation !== false, // padrão ligado
       instanceIds: [],
       recurrence: "NONE",
       scheduledAt: null,

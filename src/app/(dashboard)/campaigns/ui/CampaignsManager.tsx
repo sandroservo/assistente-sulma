@@ -83,7 +83,7 @@ export function CampaignsManager({
   const [message, setMessage] = useState("");
   const [profile, setProfile] = useState("conservative");
   const [image, setImage] = useState<{ base64: string; mime: string } | null>(null);
-  const [aiVariation, setAiVariation] = useState(false);
+  const [aiVariation, setAiVariation] = useState(true);
   const [metrics, setMetrics] = useState<Record<string, number> | null>(null);
 
   async function loadMetrics() {
@@ -134,7 +134,7 @@ export function CampaignsManager({
       setName("");
       setMessage("");
       setImage(null);
-      setAiVariation(false);
+      setAiVariation(true);
       await reload();
     } catch {
       setError("Erro ao criar campanha.");
@@ -243,7 +243,7 @@ export function CampaignsManager({
           <label className="flex items-start gap-2 text-sm mt-1 cursor-pointer">
             <input type="checkbox" checked={aiVariation} onChange={(e) => setAiVariation(e.target.checked)} className="mt-0.5" />
             <span>
-              <b>Variar com IA</b> — a assistente reescreve a mensagem a cada envio (mesmo sentido, texto diferente, parece conversa).
+              <b>Variar com IA</b> (recomendado) — a assistente reescreve a mensagem a cada envio (mesmo sentido, texto diferente, parece conversa).
               <span className="text-muted-foreground"> Preserva nome, valores, datas e links. Não use em texto que precisa ser exato.</span>
             </span>
           </label>
