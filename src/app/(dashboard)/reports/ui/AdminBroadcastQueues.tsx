@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Clock, Loader2, Pause, Radio } from "lucide-react";
+import { Clock, Loader2, Pause, Play, Radio, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type QueueRun = {
@@ -43,6 +43,24 @@ function initials(name: string) {
 
 export function AdminBroadcastQueues() {
   const [queues, setQueues] = useState<Queue[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function act(runId: string, action: "pause" | "resume" | "stop") {
+    if (action === "stop" && !confirm("Parar este disparo? O que não saiu é descartado.")) return;
+    setBusy(runId);
+    try {
+      await fetch(`/api/broadcast/${runId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const res = await fetch("/api/broadcast/queues");
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && Array.isArray(data.queues)) setQueues(data.queues);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   useEffect(() => {
     let stop = false;
@@ -146,6 +164,33 @@ export function AdminBroadcastQueues() {
                       {waiting && run.waitReason && (
                         <p className="text-[11px] text-[#001A5E] mt-1">{run.waitReason}</p>
                       )}
+                      {/* Controle do admin: pausar/retomar/parar qualquer fila */}
+                      <div className="flex gap-2 mt-2">
+                        {paused ? (
+                          <button
+                            onClick={() => act(run.id, "resume")}
+                            disabled={busy === run.id}
+                            className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                          >
+                            {busy === run.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />} Retomar
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => act(run.id, "pause")}
+                            disabled={busy === run.id}
+                            className="inline-flex items-center gap-1 rounded-md border border-orange-200 bg-orange-50 px-2 py-1 text-[11px] font-medium text-orange-700 hover:bg-orange-100 disabled:opacity-50"
+                          >
+                            {busy === run.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Pause className="w-3 h-3" />} Pausar
+                          </button>
+                        )}
+                        <button
+                          onClick={() => act(run.id, "stop")}
+                          disabled={busy === run.id}
+                          className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                        >
+                          <Square className="w-3 h-3" /> Parar
+                        </button>
+                      </div>
                     </div>
                   );
                 })}

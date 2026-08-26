@@ -83,6 +83,9 @@ export async function syncCampaignStatus(campaignId: string) {
 }
 
 export function startCampaignWorker() {
+  // Em modo rabbitmq o envio é do worker standalone — não rodar o loop legado
+  // dentro do Next (evita dois senders). No-op silencioso.
+  if (process.env.CAMPAIGN_QUEUE_DRIVER === "rabbitmq") return;
   if (busy) return;
   processCampaignQueue().catch((err) => console.error("[CampaignWorker]", err));
 }

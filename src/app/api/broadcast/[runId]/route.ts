@@ -4,10 +4,46 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { startCampaignWorker } from "@/lib/campaign-worker";
+import { startCampaignWorker, pauseCampaignRun, stopCampaignRun, resumeCampaignRun } from "@/lib/campaign-worker";
 import { presentBroadcastRun } from "@/lib/broadcast-view";
 
 export const dynamic = "force-dynamic";
+
+// Pausar / parar / retomar um disparo. Admin (OWNER/ADMIN) age em QUALQUER fila
+// da organização; usuário comum só na própria.
+export async function POST(req: Request, { params }: { params: Promise<{ runId: string }> }) {
+  const session = await auth();
+  if (!session?.user?.organizationId) {
+    return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  }
+  const { runId } = await params;
+  const action = String((await req.json().catch(() => ({}))).action || "");
+  if (!["pause", "stop", "resume"].includes(action)) {
+    return NextResponse.json({ error: "Ação inválida" }, { status: 400 });
+  }
+
+  const isAdmin = session.user.role === "OWNER" || session.user.role === "ADMIN";
+  const run = await prisma.campaignRun.findFirst({
+    where: {
+      id: runId,
+      campaign: { organizationId: session.user.organizationId },
+      ...(!isAdmin && session.user.id ? { createdByUserId: session.user.id } : {}),
+    },
+    select: { id: true },
+  });
+  if (!run) return NextResponse.json({ error: "Não encontrado" }, { status: 404 });
+
+  const by = isAdmin ? "administrador" : "consultor";
+  try {
+    if (action === "pause") await pauseCampaignRun(runId, `Pausado pelo ${by}`);
+    else if (action === "stop") await stopCampaignRun(runId);
+    else await resumeCampaignRun(runId);
+    return NextResponse.json({ ok: true, runId, action });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Falha na ação";
+    return NextResponse.json({ error: msg }, { status: 400 });
+  }
+}
 
 export async function GET(_req: Request, { params }: { params: Promise<{ runId: string }> }) {
   const session = await auth();
