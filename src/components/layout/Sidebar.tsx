@@ -29,6 +29,7 @@ import {
   LayoutGrid,
   Megaphone,
   Workflow,
+  TrendingUp,
 } from "lucide-react";
 
 const navItems = [
@@ -42,6 +43,7 @@ const navItems = [
   { href: "/knowledge", icon: BookOpen, label: "Conhecimento" },
   { href: "/users", icon: Users, label: "Usuários" },
   { href: "/reports", icon: BarChart3, label: "Relatórios" },
+  { href: "/insights", icon: TrendingUp, label: "Insights" },
   { href: "/settings", icon: Settings, label: "Configurações" },
 ];
 
