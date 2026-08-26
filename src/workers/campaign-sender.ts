@@ -44,6 +44,9 @@ import { saveMedia } from "@/lib/media-storage";
 const MAX_ATTEMPTS = Number(process.env.CAMPAIGN_MAX_ATTEMPTS || 5);
 const WORKER = process.env.CAMPAIGN_WORKER_NAME || "campaign-sender-1";
 const SHUTDOWN_TIMEOUT = Number(process.env.CAMPAIGN_WORKER_SHUTDOWN_TIMEOUT_MS || 30_000);
+// Lease: um contato em "sending" só pode ser re-clamado após esse tempo (crash mid-send).
+// Enquanto dentro do lease, outro worker não rouba o job em andamento (multi-worker safe).
+const LEASE_MS = Number(process.env.CAMPAIGN_LEASE_MS || 3 * 60_000);
 
 const mediaByRun = new Map<string, string | null>();
 
@@ -113,14 +116,35 @@ async function handleJob(job: CampaignSendJobV1): Promise<Outcome> {
   };
   const now = new Date();
 
-  // Claim idempotente: só processa pending/sending que ainda não enviou.
+  // Claim idempotente com lease: processa se está pending, OU se está sending mas
+  // o lease expirou (worker anterior morreu). providerId != null => já enviou, nunca reenvia.
+  const leaseCutoff = new Date(Date.now() - LEASE_MS);
   const claim = await prisma.campaignContact.updateMany({
-    where: { id, status: { in: ["pending", "sending"] }, providerId: null },
+    where: {
+      id,
+      providerId: null,
+      OR: [
+        { status: "pending" },
+        { status: "sending", processingAt: { lt: leaseCutoff } },
+      ],
+    },
     data: { status: "sending", processingAt: now, attemptCount: attempt + 1, lastAttemptAt: now },
   });
   if (claim.count === 0) {
-    log("skip_not_claimable", { cid, runId, contactId: id, attempt });
-    return { type: "ack" }; // já enviado/terminal/cancelado
+    // Não conseguiu clamar: ou já é terminal (ack), ou está sendo processado por
+    // outro worker dentro do lease (reprograma — NUNCA ack, senão perde a entrega).
+    const cur = await prisma.campaignContact.findUnique({
+      where: { id },
+      select: { status: true, providerId: true },
+    });
+    const terminal = !cur || cur.providerId != null ||
+      ["sent", "delivered", "read", "failed", "skipped"].includes(cur.status);
+    if (terminal) {
+      log("skip_terminal", { cid, runId, contactId: id, attempt });
+      return { type: "ack" };
+    }
+    log("lease_contention", { cid, runId, contactId: id, attempt });
+    return { type: "retry", queue: retryQueueFor(attempt, LEASE_MS), attempt };
   }
 
   const contact = await prisma.campaignContact.findUnique({

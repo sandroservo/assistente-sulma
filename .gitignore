@@ -48,3 +48,7 @@ data/
 
 # credenciais de servidor — nunca versionar
 devops/
+
+# backups locais do projeto
+sulma-backup-*.tar.gz
+sulma-backup-*.zip

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Loader2, Trash2, ChevronDown, Send, MessageSquare, CheckCircle2, XCircle, Radio, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -83,11 +83,18 @@ export function CampaignsManager({
   const [message, setMessage] = useState("");
   const [profile, setProfile] = useState("conservative");
   const [image, setImage] = useState<{ base64: string; mime: string } | null>(null);
+  const [metrics, setMetrics] = useState<Record<string, number> | null>(null);
+
+  async function loadMetrics() {
+    const res = await fetch("/api/campaigns/metrics");
+    const data = await res.json();
+    if (data.ok) setMetrics(data.metrics);
+  }
+  useEffect(() => { loadMetrics(); }, []);
 
   async function reload() {
-    const res = await fetch("/api/campaigns");
-    const data = await res.json();
-    if (data.ok) setCampaigns(data.campaigns);
+    const [c] = await Promise.all([fetch("/api/campaigns").then((r) => r.json()), loadMetrics()]);
+    if (c.ok) setCampaigns(c.campaigns);
   }
 
   async function pickImage(file: File | null) {
@@ -169,6 +176,18 @@ export function CampaignsManager({
     }
   }
 
+  async function retryFailed(id: string) {
+    setBusyId(id);
+    try {
+      const res = await fetch(`/api/campaigns/${id}/retry-failed`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Falha ao reprocessar."); return; }
+      await reload();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div className="space-y-8">
       <div>
@@ -181,6 +200,24 @@ export function CampaignsManager({
           .
         </p>
       </div>
+
+      {metrics && metrics.total > 0 && (
+        <div className="flex flex-wrap gap-3 text-sm">
+          {([
+            ["Na fila", metrics.queued, "text-blue-700 bg-blue-50"],
+            ["Enviando", metrics.processing, "text-amber-700 bg-amber-50"],
+            ["Enviados", metrics.sent, "text-green-700 bg-green-50"],
+            ["Retry", metrics.retry, "text-orange-700 bg-orange-50"],
+            ["Erros", metrics.failed, "text-red-700 bg-red-50"],
+            ["Ignorados", metrics.skipped, "text-gray-600 bg-gray-100"],
+          ] as const).map(([label, value, cls]) => (
+            <div key={label} className={`rounded-lg px-3 py-2 ${cls}`}>
+              <span className="text-xs">{label}</span>
+              <div className="text-lg font-bold leading-tight">{value ?? 0}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <form onSubmit={handleCreate} className="rounded-lg border p-4 space-y-4">
         <div className="space-y-1">
@@ -276,6 +313,15 @@ export function CampaignsManager({
                   <button onClick={() => toggleRecipients(c.id)} className="flex items-center gap-1 text-blue-600">
                     Ver quem recebeu <ChevronDown className={`h-3 w-3 transition ${expanded === c.id ? "rotate-180" : ""}`} />
                   </button>
+                  {run.failed > 0 && (
+                    <button
+                      onClick={() => retryFailed(c.id)}
+                      disabled={busyId === c.id}
+                      className="flex items-center gap-1 text-orange-700 disabled:opacity-50"
+                    >
+                      Reprocessar falhas
+                    </button>
+                  )}
                 </div>
               )}
 
