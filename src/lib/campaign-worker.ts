@@ -386,7 +386,7 @@ async function processJob(job: ClaimedJob): Promise<JobResult> {
 
     const stopNow =
       kind === "blocked" ||
-      /connection closed|restricted|banned|forbidden/i.test(errMsg);
+      /restricted|banned|forbidden/i.test(errMsg);
     const updated = await prisma.campaignRun.update({
       where: { id: job.runId },
       data: {

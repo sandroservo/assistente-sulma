@@ -386,12 +386,14 @@ export async function recordSendFailure(instanceId: string, error: string) {
 
   const errors = inst.consecutiveErrors + 1;
   let pausedUntil: Date | null = inst.pausedUntil;
-  const restartWarmup = kind === "blocked" || kind === "transient";
   if (kind === "blocked") {
-    pausedUntil = new Date(Date.now() + msUntilNextMorningSendWindow());
-  } else if (errors >= 3) {
+    // Restrição real do WhatsApp: trava duro até a manhã e reinicia warmup.
     pausedUntil = new Date(Date.now() + msUntilNextMorningSendWindow());
   } else if (kind === "transient") {
+    // Blip de conexão (Baileys reconecta sozinho): cooldown curto, NÃO trava o dia.
+    pausedUntil = new Date(Date.now() + 5 * 60_000);
+  } else if (errors >= 5) {
+    // Erros desconhecidos repetidos: cooldown de 30min, não o dia inteiro.
     pausedUntil = new Date(Date.now() + 30 * 60_000);
   }
 
@@ -401,7 +403,7 @@ export async function recordSendFailure(instanceId: string, error: string) {
       consecutiveErrors: errors,
       lastError: formatSendError(error).slice(0, 200),
       pausedUntil,
-      ...(restartWarmup && kind === "blocked" ? { warmupStartedAt: new Date() } : {}),
+      ...(kind === "blocked" ? { warmupStartedAt: new Date() } : {}),
     },
   });
   return kind;

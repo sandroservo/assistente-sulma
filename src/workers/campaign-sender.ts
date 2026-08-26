@@ -95,6 +95,11 @@ async function markSkipped(id: string, runId: string, kind: string, msg: string)
   await prisma.campaignRun.update({ where: { id: runId }, data: { skipped: { increment: 1 } } });
 }
 
+async function pauseRunHard(runId: string, campaignId: string, reason: string) {
+  await prisma.campaignRun.update({ where: { id: runId }, data: { status: "PAUSED", pauseReason: reason } });
+  await prisma.campaign.update({ where: { id: campaignId }, data: { status: "PAUSED" } });
+}
+
 async function maybeFinalizeRun(runId: string) {
   const open = await prisma.campaignContact.count({
     where: { runId, status: { in: ["pending", "sending"] } },
@@ -204,9 +209,21 @@ async function handleJob(job: CampaignSendJobV1): Promise<Outcome> {
   const picked = pickRandomInstance(pool, profile);
   if (!picked) {
     const info = poolBlockInfo(pool, profile);
+    // "hard" = instância desconectada / muitos erros: não adianta reenfileirar
+    // (looparia pra sempre). Pausa o run + mostra o motivo; Retomar republica.
+    if (info?.kind === "hard") {
+      await prisma.campaignContact.update({
+        where: { id },
+        data: { status: "pending", processingAt: null, queuedAt: null, queueJobId: null },
+      });
+      await pauseRunHard(run.id, campaign.id, info.reason);
+      log("run_paused_hard", { cid, runId: run.id, reason: info.reason });
+      return { type: "ack" };
+    }
+    // hourly/daily/quiet/cooldown = espera legítima → reprograma sem contar falha
     const waitMs = info?.waitMs ?? 60_000;
     await setPending(id, new Date(Date.now() + waitMs));
-    log("no_instance", { cid, runId, waitMs, reason: info?.reason });
+    log("no_instance", { cid, runId: run.id, waitMs, reason: info?.reason });
     return { type: "retry", queue: retryQueueFor(attempt, waitMs), attempt };
   }
 
@@ -290,7 +307,8 @@ async function handleJob(job: CampaignSendJobV1): Promise<Outcome> {
 
     await recordSendFailure(picked.id, errMsg);
     const nextAttempt = attempt + 1;
-    const permanentStop = kind === "blocked" || /connection closed|restricted|banned|forbidden/i.test(errMsg);
+    // "connection closed" é transitório (Baileys reconecta) — não trava o run.
+    const permanentStop = kind === "blocked" || /restricted|banned|forbidden/i.test(errMsg);
 
     if (permanentStop || nextAttempt >= MAX_ATTEMPTS) {
       await prisma.campaignContact.update({
