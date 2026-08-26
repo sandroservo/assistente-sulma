@@ -28,6 +28,8 @@ import {
   revertMassOutbound,
 } from "@/lib/mass-inbox";
 import { isSuppressed } from "@/lib/suppression";
+import { spin } from "@/lib/spintax";
+import { generateVariations } from "@/lib/message-variations";
 import type { Campaign, CampaignContact, CampaignRun, CampaignStatus } from "@prisma/client";
 
 const MAX_CONSECUTIVE_FAILURES = 5;
@@ -54,6 +56,17 @@ type ClaimedJob = CampaignContact & {
 
 let busy = false;
 const mediaByRun = new Map<string, string | null>();
+const variationsByRun = new Map<string, string[]>();
+
+async function pickMessage(runId: string, aiVariation: boolean, message: string): Promise<string> {
+  if (!aiVariation) return spin(message);
+  let pool = variationsByRun.get(runId);
+  if (!pool) {
+    pool = await generateVariations(message);
+    variationsByRun.set(runId, pool);
+  }
+  return spin(pool[Math.floor(Math.random() * pool.length)] ?? message);
+}
 
 export async function syncCampaignStatus(campaignId: string) {
   const open = await prisma.campaignRun.findMany({
@@ -285,7 +298,7 @@ async function processJob(job: ClaimedJob): Promise<JobResult> {
 
   let inboxId: string | null = null;
   const health = instanceHealth(picked, profile);
-  const text = personalizeCampaignMessage(campaign.message, job.name);
+  const text = personalizeCampaignMessage(await pickMessage(job.run.id, campaign.aiVariation, campaign.message), job.name);
   const typing = composingDelayMs(text);
   const delayMs = computeCampaignDelay(job.run.sent + job.run.failed, profile, health.hourly);
 

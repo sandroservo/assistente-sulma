@@ -38,6 +38,8 @@ import {
   extractEvolutionMessageId,
 } from "@/lib/mass-inbox";
 import { isSuppressed } from "@/lib/suppression";
+import { spin } from "@/lib/spintax";
+import { generateVariations } from "@/lib/message-variations";
 import { evolutionSendText, evolutionSendMedia, evolutionNumberExists } from "@/lib/evolution";
 import { saveMedia } from "@/lib/media-storage";
 
@@ -49,6 +51,19 @@ const SHUTDOWN_TIMEOUT = Number(process.env.CAMPAIGN_WORKER_SHUTDOWN_TIMEOUT_MS 
 const LEASE_MS = Number(process.env.CAMPAIGN_LEASE_MS || 3 * 60_000);
 
 const mediaByRun = new Map<string, string | null>();
+const variationsByRun = new Map<string, string[]>();
+
+/** Texto do envio: pool de variações da IA (se ligado) sorteado, senão o texto; sempre passa pelo spin. */
+async function pickMessage(runId: string, aiVariation: boolean, message: string): Promise<string> {
+  if (!aiVariation) return spin(message);
+  let pool = variationsByRun.get(runId);
+  if (!pool) {
+    pool = await generateVariations(message);
+    variationsByRun.set(runId, pool);
+  }
+  const base = pool[Math.floor(Math.random() * pool.length)] ?? message;
+  return spin(base);
+}
 
 type Outcome =
   | { type: "ack" }
@@ -93,6 +108,7 @@ async function maybeFinalizeRun(runId: string) {
   });
   await prisma.campaign.update({ where: { id: run.campaignId }, data: { status: "DONE", lastRunAt: new Date() } });
   mediaByRun.delete(runId);
+  variationsByRun.delete(runId);
 }
 
 async function mediaUrlForRun(runId: string, base64: string | null, mime: string | null): Promise<string | null> {
@@ -209,7 +225,7 @@ async function handleJob(job: CampaignSendJobV1): Promise<Outcome> {
   }
 
   // Envio.
-  const text = personalizeCampaignMessage(campaign.message, contact.name);
+  const text = personalizeCampaignMessage(await pickMessage(run.id, campaign.aiVariation, campaign.message), contact.name);
   const typing = composingDelayMs(text);
   let inboxId: string | null = null;
   try {
